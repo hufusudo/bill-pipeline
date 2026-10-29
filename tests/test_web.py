@@ -5,7 +5,7 @@ from nicegui.testing import User
 
 from bill_pipeline.db import connect, month_by_category, set_category
 from bill_pipeline.pipeline import import_bill
-from tests.fakes import write_wechat_xlsx
+from tests.fakes import SAMPLE_ROWS, write_wechat_xlsx
 
 
 @pytest.fixture
@@ -87,3 +87,19 @@ async def test_sort_page_recategorize(user: User, db, tmp_path):
     await user.should_see("都归好类了")
     user.find(marker="recat-星光球馆").elements.pop().set_value("娱乐")
     assert ("娱乐", 4000) in month_by_category(connect(db), "2026-10")
+
+
+async def test_recon_page(user: User, db, tmp_path):
+    import_bill(connect(db), write_wechat_xlsx(tmp_path / "b.xlsx"), "b.xlsx")
+    await user.open("/")
+    user.find(marker="nav-recon").click()
+    await user.should_see("这个月账单里的支出是 ¥112.30，其中全额退款的原交易 ¥26.80 不算消费，所以实际消费是 ¥85.50。")
+    await user.should_see("✓ 对账平了")
+
+
+async def test_recon_page_without_expense(user: User, db, tmp_path):
+    only_income = [r for r in SAMPLE_ROWS if r["收/支"] != "支出"]
+    import_bill(connect(db), write_wechat_xlsx(tmp_path / "b.xlsx", rows=only_income), "b.xlsx")
+    await user.open("/")
+    user.find(marker="nav-recon").click()
+    await user.should_see("这个月没有支出记录。")

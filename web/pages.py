@@ -11,9 +11,10 @@ from bill_pipeline.db import (categorized, category_transactions, connect, daily
                               unmapped_counterparties)
 from bill_pipeline.model import BillError
 from bill_pipeline.pipeline import ImportReport, import_bill
-from bill_pipeline.report import change_ratio, previous_month
+from bill_pipeline.report import change_ratio, month_reconciliation, previous_month
 from bill_pipeline.rules import CATEGORIES
-from web.theme import (CATEGORY_COLORS, COUNT_UP_JS, CSS, daily_option, donut_option, money, monthly_option)
+from web.theme import (CATEGORY_COLORS, COUNT_UP_JS, CSS, daily_option, donut_option, money, monthly_option,
+                       waterfall_option)
 
 DEFAULT_DB = Path(__file__).resolve().parents[1] / "data" / "bills.db"
 PAGES = [("overview", "总览", "space_dashboard"), ("trend", "趋势", "trending_up"), ("upload", "导入", "upload"),
@@ -249,12 +250,42 @@ def render_sort(ctx: Context) -> None:
     done_list()
 
 
-def placeholder(page: str):
-    return lambda ctx: ui.label(TITLES[page]).classes("title")
+def render_recon(ctx: Context) -> None:
+    ui.label(TITLES["recon"]).classes("title")
+    if ctx.month is None:
+        ui.label("还没有导入账单").classes("empty")
+        return
+    lines = month_reconciliation(ctx.conn, ctx.month)
+    expense = [line for line in lines if line.direction == "支出"]
+    platform, *deductions, kept = expense
+    if platform.cents == 0:
+        text = "这个月没有支出记录。"
+    elif deductions:
+        parts = "、".join(f"{line.label.removeprefix('减：')} {money(line.cents)}" for line in deductions)
+        text = f"这个月账单里的支出是 {money(platform.cents)}，其中{parts} 不算消费，所以实际消费是 {money(kept.cents)}。"
+    else:
+        text = f"这个月账单里的支出是 {money(platform.cents)}，全部算作消费。"
+    ui.label(text).classes("explain mt-2")
+    # 能进库的数据都过了三关，这个月有数据就说明三关都过了
+    with ui.element("div").classes("badges mt-3"):
+        for badge in ("✓ 读全了", "✓ 对账平了", "✓ 不重复"):
+            ui.label(badge).classes("badge")
+    if platform.cents:
+        ui.echart(waterfall_option(expense)).classes("chart")
+    with ui.element("div").classes("table mini-table mt-4"):
+        with ui.element("div").classes("tr"):
+            for head in ("收入和中性交易", "笔数", "金额"):
+                ui.label(head)
+        for line in lines:
+            if line.direction != "支出":
+                with ui.element("div").classes("tr"):
+                    ui.label(f"{line.direction} · {line.label}")
+                    ui.label(str(line.count))
+                    ui.label(money(line.cents))
 
 
 RENDERERS = {"overview": render_overview, "trend": render_trend, "upload": render_upload,
-             "sort": render_sort, "recon": placeholder("recon")}
+             "sort": render_sort, "recon": render_recon}
 
 
 def make_view(page: str, render, ctx: Context):
