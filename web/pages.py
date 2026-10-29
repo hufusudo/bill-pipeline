@@ -1,12 +1,15 @@
 """账单流水线的界面：左边导航，右边五个面板。只负责收文件、调函数、显示结果。"""
+import io
 import os
 import sqlite3
 from pathlib import Path
 
 from nicegui import ui
 
-from bill_pipeline.db import (category_transactions, connect, daily_expense, month_by_category, month_totals, months,
-                              recent_months)
+from bill_pipeline.db import (category_transactions, connect, daily_expense, import_history, month_by_category,
+                              month_totals, months, recent_months)
+from bill_pipeline.model import BillError
+from bill_pipeline.pipeline import ImportReport, import_bill
 from bill_pipeline.report import change_ratio, previous_month
 from web.theme import (CATEGORY_COLORS, COUNT_UP_JS, CSS, daily_option, donut_option, money, monthly_option)
 
@@ -134,11 +137,71 @@ def render_trend(ctx: Context) -> None:
     body("按天")
 
 
+def result_card(report: ImportReport) -> None:
+    with ui.element("div").classes("result"):
+        with ui.element("div").classes("result-head"):
+            ui.label(f"{report.source}账单 {report.period_start[5:10]} ~ {report.period_end[5:10]}") \
+                .classes("font-semibold")
+            ui.label(f"新增 {report.new} 笔 · 跳过 {report.skipped} 笔").classes("note")
+        with ui.element("div").classes("bar"):
+            ui.element("div")
+        with ui.element("div").classes("checks"):
+            for text in ("第一关：读全了", "第二关：对账平了", "第三关：不重复"):
+                with ui.element("div").classes("check"):
+                    ui.label("✓").classes("tick")
+                    ui.label(text)
+        if report.unknown:
+            ui.label(f"有 {report.unknown} 笔没见过的交易类型或状态，没算进统计，需要补规则") \
+                .classes("text-sm text-orange-9")
+
+
+def refresh_months(ctx: Context) -> None:
+    """导入后可能多出新的月份；原来没有数据时，切到最新的月份。"""
+    all_months = months(ctx.conn)
+    if ctx.month is None and all_months:
+        ctx.month = all_months[0]
+    ctx.month_select.set_options({m: month_label(m) for m in all_months}, value=ctx.month)
+    ctx.month_select.set_visibility(bool(all_months))
+
+
+def render_upload(ctx: Context) -> None:
+    ui.label(TITLES["upload"]).classes("title")
+
+    async def handle(e) -> None:
+        data = await e.file.read()
+        with results:
+            try:
+                report = import_bill(ctx.conn, io.BytesIO(data), e.file.name)
+            except BillError as error:
+                with ui.element("div").classes("result bad"):
+                    ui.label(f"{e.file.name} 拒收：{error}")
+            else:
+                result_card(report)
+        upload.reset()
+        refresh_months(ctx)
+        history.refresh()
+
+    upload = ui.upload(label="把微信 .xlsx 或支付宝 .csv 拖到这里", multiple=True, auto_upload=True,
+                       on_upload=handle).props("accept=.xlsx,.csv flat bordered color=teal") \
+        .classes("drop mt-3").mark("upload")
+    results = ui.column().classes("w-full gap-3 mt-3")
+
+    @ui.refreshable
+    def history() -> None:
+        rows = import_history(ctx.conn)
+        if rows:
+            ui.label("最近导入").classes("note mt-4")
+        for _, source, start, end, new, skipped in rows:
+            ui.label(f"{source} · {start[:10]} ~ {end[:10]} · 新增 {new} · 跳过 {skipped}").classes("history")
+
+    history()
+
+
 def placeholder(page: str):
     return lambda ctx: ui.label(TITLES[page]).classes("title")
 
 
-RENDERERS = {"overview": render_overview, "trend": render_trend, "upload": placeholder("upload"),
+RENDERERS = {"overview": render_overview, "trend": render_trend, "upload": render_upload,
              "sort": placeholder("sort"), "recon": placeholder("recon")}
 
 
@@ -174,6 +237,8 @@ def register() -> None:
             ctx.views[page].refresh()
 
         def change_month(value: str) -> None:
+            if value == ctx.month:  # 导入后程序自己改选项时也会触发，这时不重画，免得冲掉导入结果
+                return
             ctx.month = value
             ctx.views[ctx.page].refresh()
 

@@ -211,8 +211,8 @@ body { background: #e9edf2; color: #111827;
 .bar { width: 100%; height: 6px; border-radius: 6px; background: #e6eaf0; overflow: hidden; margin: 10px 0 6px; }
 .bar > div { height: 100%; background: #1baf7a; border-radius: 6px; animation: fill 1.4s cubic-bezier(.2,.8,.2,1) both; }
 .check { display: flex; align-items: center; gap: 10px; font-size: 14px; padding: 4px 0; animation: rise .4s ease both; }
-.check:nth-of-type(1) { animation-delay: .5s } .check:nth-of-type(2) { animation-delay: .9s }
-.check:nth-of-type(3) { animation-delay: 1.3s }
+.checks > .check:nth-child(1) { animation-delay: .5s } .checks > .check:nth-child(2) { animation-delay: .9s }
+.checks > .check:nth-child(3) { animation-delay: 1.3s }
 .tick { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 11px;
   background: #e3f5e9; color: #0a7a0a; font-weight: 700; }
 .history { font-size: 13px; color: #6b7584; }
