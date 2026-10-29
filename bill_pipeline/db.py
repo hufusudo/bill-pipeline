@@ -255,7 +255,9 @@ def add_category(conn: sqlite3.Connection, name: str) -> str:
 
 
 def save_suggestions(conn: sqlite3.Connection, mapping: dict[str, str], model: str) -> None:
-    """存下 AI 的建议；同一个交易对方再建议一次就覆盖，并清掉旧的选择。"""
+    """存下 AI 的建议；同一个交易对方再建议一次就覆盖，并清掉旧的选择。
+
+    分类是空字符串表示问过了、AI 没把握：记下来，下次就不再问它。"""
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with conn:
         conn.executemany(
@@ -265,13 +267,20 @@ def save_suggestions(conn: sqlite3.Connection, mapping: dict[str, str], model: s
             [(name, category, model, now) for name, category in mapping.items()])
 
 
+def asked_counterparties(conn: sqlite3.Connection) -> set[str]:
+    """问过 AI 的交易对方，不管它给没给建议。"""
+    return {name for (name,) in conn.execute("SELECT counterparty FROM ai_suggestions")}
+
+
 def suggestions(conn: sqlite3.Connection) -> dict[str, str]:
     """还没被确认的 AI 建议：{交易对方: 建议的分类}。"""
-    return dict(conn.execute("SELECT counterparty, suggested FROM ai_suggestions WHERE chosen IS NULL"))
+    return dict(conn.execute(
+        "SELECT counterparty, suggested FROM ai_suggestions WHERE chosen IS NULL AND suggested != ''"))
 
 
 def ai_accuracy(conn: sqlite3.Connection) -> tuple[int, int]:
-    """（AI 猜对的条数, 用户确认过的条数）。"""
+    """（AI 猜对的条数, 用户确认过的条数）。AI 没给建议的不算。"""
     hits, decided = conn.execute(
-        "SELECT COALESCE(SUM(chosen = suggested), 0), COUNT(chosen) FROM ai_suggestions").fetchone()
+        "SELECT COALESCE(SUM(chosen = suggested), 0), COUNT(chosen) FROM ai_suggestions "
+        "WHERE suggested != ''").fetchone()
     return hits, decided

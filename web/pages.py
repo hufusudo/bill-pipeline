@@ -4,10 +4,12 @@ import os
 import sqlite3
 from pathlib import Path
 
-from nicegui import ui
+from nicegui import background_tasks, run, ui
 
-from bill_pipeline.db import (add_category, categories, categorized, category_transactions, connect, daily_expense, import_history,
-                              month_by_category, month_totals, months, recent_months, set_category,
+from bill_pipeline import ai
+from bill_pipeline.db import (Card, add_category, ai_accuracy, asked_counterparties, categories, categorized,
+                              category_transactions, connect, daily_expense, import_history, month_by_category,
+                              month_totals, months, recent_months, save_suggestions, set_category, suggestions,
                               unmapped_counterparties)
 from bill_pipeline.model import BillError
 from bill_pipeline.pipeline import ImportReport, import_bill
@@ -19,6 +21,7 @@ DEFAULT_DB = Path(__file__).resolve().parents[1] / "data" / "bills.db"
 PAGES = [("overview", "总览", "space_dashboard"), ("trend", "趋势", "trending_up"), ("upload", "导入", "upload"),
          ("sort", "归类", "sell"), ("recon", "对账", "task_alt")]
 TITLES = {"trend": "花钱的节奏", "upload": "导入账单", "sort": "给交易对方归类", "recon": "钱都去哪了"}
+AI_BATCH = 20  # 一次问 20 个：回复短，不容易被截断，第一张卡片的建议也来得快
 
 
 def db_path() -> Path:
@@ -44,6 +47,10 @@ class Context:
         self.page = "overview"
         self.views: dict = {}
         self.show = lambda page: None
+        # AI 建议在后台问：状态放这里，切走再切回归类页也能接着显示
+        self.ai_busy = False
+        self.ai_error: str | None = None
+        self.sort_card = None
 
 
 def open_category(ctx: Context, category: str) -> None:
@@ -201,6 +208,43 @@ def render_upload(ctx: Context) -> None:
     history()
 
 
+async def fetch_suggestions(ctx: Context, cards: list[Card]) -> None:
+    """后台问 AI，每问完一批就存下来、刷新卡片。调用前先把 ctx.ai_busy 设成 True。"""
+    try:
+        client, model = ai.make_client()
+        names = categories(ctx.conn)
+        for start in range(0, len(cards), AI_BATCH):
+            batch = cards[start:start + AI_BATCH]
+            mapping = await run.io_bound(ai.suggest_categories, client, model, batch, names)
+            if mapping is None:  # 程序正在关闭；这批不存，免得被当成“AI 没把握”
+                return
+            save_suggestions(ctx.conn, {c.counterparty: mapping.get(c.counterparty, "") for c in batch}, model)
+            ctx.sort_card.refresh()
+    except ai.AIError as e:
+        ctx.ai_error = str(e)
+    finally:
+        ctx.ai_busy = False
+        ctx.sort_card.refresh()
+
+
+def ai_line(ctx: Context, c: Card, suggestion: str | None, accept) -> None:
+    """卡片下面的一行：AI 的建议，或者没有建议的原因。"""
+    with ui.element("div").classes("ai-line"):
+        if suggestion:
+            ui.label(f"AI 建议：{suggestion}").classes("ai-pick")
+            ui.button("采用", on_click=accept).props("unelevated rounded dense color=teal").classes("px-3") \
+                .mark("ai-accept")
+        elif ai.is_person(c.tx_type):
+            ui.label("付给个人的钱不发给 AI，请自己选")
+        elif c.counterparty in asked_counterparties(ctx.conn):
+            ui.label("AI 没把握，请自己选")
+        elif ctx.ai_busy:
+            ui.spinner(size="16px", color="teal")
+            ui.label("AI 正在想…")
+        elif ctx.ai_error:
+            ui.label(f"AI 这次没给出建议：{ctx.ai_error}").mark("ai-error")
+
+
 def render_sort(ctx: Context) -> None:
     ui.label(TITLES["sort"]).classes("title")
     skipped: set[str] = set()
@@ -247,21 +291,27 @@ def render_sort(ctx: Context) -> None:
             if not pending:
                 ui.label("剩下的都跳过了" if skipped else "都归好类了").classes("empty")
                 add_button()
-                return
-            c = pending[0]
-            ui.label(f"第 {total - len(pending) + 1} / {total} 个 · 归一次，以后自动记住").classes("note")
-            with ui.element("div").classes("who"):
-                ui.label(c.counterparty).classes("who-name")
-                ui.label(f"{c.count} 笔 · {money(c.cents)}").classes("who-meta")
-                hint = f"支付宝分类：{c.tx_type}" if c.source == "支付宝" else c.tx_type
-                ui.label(f"{hint} · 最近一笔 {c.last_time[5:16]}").classes("who-meta")
-                with ui.element("div").classes("chips"):
-                    for category in categories(ctx.conn):
-                        ui.label(category).classes("chip").mark(f"chip-{category}") \
-                            .on("click", lambda category=category, name=c.counterparty: choose(name, category))
-                    add_button()
-            ui.label("跳过，以后再说 →").classes("skip").mark("skip") \
-                .on("click", lambda name=c.counterparty: choose(name, None))
+            else:
+                c = pending[0]
+                suggestion = suggestions(ctx.conn).get(c.counterparty)
+                ui.label(f"第 {total - len(pending) + 1} / {total} 个 · 归一次，以后自动记住").classes("note")
+                with ui.element("div").classes("who"):
+                    ui.label(c.counterparty).classes("who-name")
+                    ui.label(f"{c.count} 笔 · {money(c.cents)}").classes("who-meta")
+                    hint = f"支付宝分类：{c.tx_type}" if c.source == "支付宝" else c.tx_type
+                    ui.label(f"{hint} · 最近一笔 {c.last_time[5:16]}").classes("who-meta")
+                    with ui.element("div").classes("chips"):
+                        for category in categories(ctx.conn):
+                            ui.label(category).classes("chip suggested" if category == suggestion else "chip") \
+                                .mark(f"chip-{category}") \
+                                .on("click", lambda category=category, name=c.counterparty: choose(name, category))
+                        add_button()
+                    ai_line(ctx, c, suggestion, lambda name=c.counterparty, s=suggestion: choose(name, s))
+                ui.label("跳过，以后再说 →").classes("skip").mark("skip") \
+                    .on("click", lambda name=c.counterparty: choose(name, None))
+            hits, decided = ai_accuracy(ctx.conn)
+            if decided:
+                ui.label(f"AI 建议准确率：{hits} / {decided}（{round(hits / decided * 100)}%）").classes("note mt-3")
 
     @ui.refreshable
     def done_list() -> None:
@@ -275,8 +325,16 @@ def render_sort(ctx: Context) -> None:
                               on_change=lambda e, name=name: set_category(ctx.conn, name, e.value)) \
                         .props("dense outlined").mark(f"recat-{name}")
 
+    asked = asked_counterparties(ctx.conn)
+    need = [c for c in unmapped_counterparties(ctx.conn) if not ai.is_person(c.tx_type) and c.counterparty not in asked]
+    start = bool(need) and not ctx.ai_busy  # 上一次还没问完就不再问，免得重复花钱
+    if start:
+        ctx.ai_busy, ctx.ai_error = True, None  # 先设好，卡片第一次画出来就显示“AI 正在想…”
+    ctx.sort_card = card
     card()
     done_list()
+    if start:
+        background_tasks.create(fetch_suggestions(ctx, need), name="ai-suggest")
 
 
 def render_recon(ctx: Context) -> None:

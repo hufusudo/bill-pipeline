@@ -238,9 +238,13 @@ body { background: #e9edf2; color: #111827;
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
 .chip { padding: 8px 16px; border-radius: 999px; border: 1px solid #cfd6e0; font-size: 14px; cursor: pointer;
   transition: background .2s, color .2s, border-color .2s, transform .15s; user-select: none; }
+.chip.suggested { border-color: #1baf7a; box-shadow: inset 0 0 0 1px #1baf7a; color: #0f8a5f; font-weight: 600; }
 .chip:hover { background: #1baf7a; border-color: #1baf7a; color: #fff; transform: translateY(-1px); }
 .chip.add { border-style: dashed; color: #0f8a5f; }
 .chip.add:hover { color: #fff; }
+.ai-line { display: flex; align-items: center; gap: 10px; min-height: 32px; margin-top: 14px;
+  font-size: 13px; color: #6b7584; }
+.ai-pick { font-size: 14px; font-weight: 600; color: #0f8a5f; }
 .skip { font-size: 13px; color: #6b7584; cursor: pointer; margin-top: 12px; }
 .recat { width: 100%; max-width: 560px; margin-top: 22px; }
 .recat-row { display: grid; grid-template-columns: 1fr auto 130px; gap: 12px; align-items: center; width: 100%;

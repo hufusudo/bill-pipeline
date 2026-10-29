@@ -153,16 +153,17 @@ tests/
 ### 任务 23：卡片下方直接显示 AI 建议（10-29 按黄飞的要求改）
 
 - 进入归类页时：
-  - 找出还没有建议的商户卡片。如果有，就在后台调用 `make_client()`、`suggest_categories()`（用 `run.io_bound`，不挡住页面），再 `save_suggestions()`，然后刷新卡片。
+  - 找出还没问过 AI 的商户卡片。如果有，就在后台调用 `make_client()`、`suggest_categories()`（用 `run.io_bound`，不挡住页面），每 20 个一批，每批 `save_suggestions()` 后刷新卡片。AI 没把握的存成空字符串，下次不再问。
   - 等待期间，卡片下面显示“AI 正在想…”。
   - 出 `AIError` 时，显示“AI 这次没给出建议：{原因}”，带 marker `ai-error`。
 - 当前卡片有建议时：卡片下面显示“AI 建议：{类别}”，再加一个“采用”按钮，带 marker `ai-accept`；对应的类别按钮多加一个 `suggested` 样式（主色描边）。
+- 没有建议时说明原因：个人收款显示“付给个人的钱不发给 AI，请自己选”；问过但没把握显示“AI 没把握，请自己选”。
 - 有确认过的建议时，显示“AI 建议准确率：{对的} / {确认过的}（{百分比}%）”。
-- `tests/conftest.py` 加一个 autouse fixture：默认把 `bill_pipeline.ai.make_client` 换成抛 `AIError("测试环境不连模型")` 的函数。项目里的 `.env` 有真 key，绝不能让测试联网。
+- 项目里的 `.env` 有真 key，绝不能让测试联网。`tests/conftest.py` 的 autouse fixture 让测试看不到 `.env` 和环境变量里的 key，`make_client()` 走真实代码，抛 `AIError("AI 还没配置：…")`。
 
 **测试**（用 `monkeypatch.setattr("bill_pipeline.ai.make_client", lambda: (FakeLLM([...]), "fake"))` 覆盖默认的替身）：
 - `test_ai_suggestion_under_card`：进入归类页后能看到“AI 建议：运动”；点 `ai-accept` 后能看到“AI 建议准确率：1 / 1（100%）”。
-- `test_ai_suggest_error_shown`：用默认的替身时，能看到“AI 这次没给出建议：测试环境不连模型”。
+- `test_ai_suggest_error_shown`：不替换时，能看到“AI 这次没给出建议：AI 还没配置”，手动归类照常能用。
 
 提交：`feat: AI suggestions under each card`
 

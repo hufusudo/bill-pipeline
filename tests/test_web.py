@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from nicegui import ui
 from nicegui.elements.upload_files import SmallFileUpload
@@ -5,7 +7,7 @@ from nicegui.testing import User
 
 from bill_pipeline.db import connect, month_by_category, set_category
 from bill_pipeline.pipeline import import_bill
-from tests.fakes import SAMPLE_ROWS, write_wechat_xlsx
+from tests.fakes import SAMPLE_ROWS, FakeLLM, write_wechat_xlsx
 
 
 @pytest.fixture
@@ -136,3 +138,28 @@ async def test_add_duplicate_category_shows_error(user: User, db, tmp_path):
     user.find(marker="new-category-name").type("吃饭")
     user.find(marker="new-category-ok").click()
     await user.should_see("已经有这个分类了")
+
+
+async def test_ai_suggestion_under_card(user: User, db, tmp_path, monkeypatch):
+    reply = {"suggestions": [{"name": "星光球馆", "category": "运动"}, {"name": "食堂一楼", "category": "吃饭"}]}
+    llm = FakeLLM([{"content": json.dumps(reply, ensure_ascii=False)}])
+    monkeypatch.setattr("bill_pipeline.ai.make_client", lambda: (llm, "fake"))
+    import_bill(connect(db), write_wechat_xlsx(tmp_path / "b.xlsx"), "b.xlsx")
+    await user.open("/")
+    user.find(marker="nav-sort").click()
+    await user.should_see("AI 建议：运动")
+    user.find(marker="ai-accept").click()
+    await user.should_see("AI 建议：吃饭")
+    await user.should_see("AI 建议准确率：1 / 1（100%）")
+    user.find(marker="ai-accept").click()
+    await user.should_see("付给个人的钱不发给 AI")  # 第三张是张阿姨
+    assert len(llm.calls) == 1 and "张阿姨" not in llm.sent_text()
+
+
+async def test_ai_suggest_error_shown(user: User, db, tmp_path):
+    import_bill(connect(db), write_wechat_xlsx(tmp_path / "b.xlsx"), "b.xlsx")
+    await user.open("/")
+    user.find(marker="nav-sort").click()
+    await user.should_see("AI 这次没给出建议：AI 还没配置")  # conftest 让测试看不到 key
+    user.find(marker="chip-运动").click()  # 手动归类照常能用
+    await user.should_see("第 2 / 3 个")

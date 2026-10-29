@@ -5,7 +5,8 @@ import pytest
 
 from bill_pipeline import ai
 from bill_pipeline.ai import AIError, load_env, suggest_categories
-from bill_pipeline.db import ai_accuracy, connect, save_suggestions, set_category, suggestions, unmapped_counterparties
+from bill_pipeline.db import (ai_accuracy, asked_counterparties, connect, save_suggestions, set_category, suggestions,
+                              unmapped_counterparties)
 from bill_pipeline.pipeline import import_bill
 from bill_pipeline.rules import DEFAULT_CATEGORIES
 from tests.fakes import FakeLLM, write_wechat_xlsx
@@ -73,3 +74,11 @@ def test_accuracy(conn):
     set_category(conn, "食堂一楼", "吃饭")
     assert ai_accuracy(conn) == (1, 2)
     assert suggestions(conn) == {}
+
+
+def test_declined_suggestions_are_remembered_but_hidden(conn):
+    save_suggestions(conn, {"星光球馆": "运动", "食堂一楼": ""}, "fake")  # 空字符串：问过，AI 没把握
+    assert asked_counterparties(conn) == {"星光球馆", "食堂一楼"}
+    assert suggestions(conn) == {"星光球馆": "运动"}
+    set_category(conn, "食堂一楼", "吃饭")
+    assert ai_accuracy(conn) == (0, 0)
