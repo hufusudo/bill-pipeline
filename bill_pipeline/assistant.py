@@ -3,10 +3,10 @@ import json
 import re
 import sqlite3
 from datetime import date
-from decimal import Decimal
 from typing import NamedTuple
 
 from bill_pipeline.ai import AIError
+from bill_pipeline.convert import yuan
 from bill_pipeline.db import (UNCATEGORIZED, categories, category_transactions, daily_expense, find_transactions,
                               month_by_category, month_by_counterparty, month_totals, months, person_counterparties)
 from bill_pipeline.rules import EXPENSE, INCOME
@@ -34,10 +34,6 @@ class Step(NamedTuple):
 class Answer(NamedTuple):
     text: str
     steps: list[Step]
-
-
-def yuan(cents: int) -> str:
-    return f"{Decimal(int(cents)) / 100:.2f}"
 
 
 def _month(conn: sqlite3.Connection, month) -> None:
