@@ -1,10 +1,9 @@
 """读微信支付导出的账单（xlsx）。"""
-import re
-
 import pandas as pd
 
 from bill_pipeline.convert import to_cents, to_time_text
-from bill_pipeline.model import ROW_COLUMNS, BillError, ParsedBill, Summary
+from bill_pipeline.header import parse_period, parse_summary
+from bill_pipeline.model import ROW_COLUMNS, BillError, ParsedBill
 
 TITLE = "微信支付账单明细"
 WECHAT_COLUMNS = {
@@ -13,7 +12,6 @@ WECHAT_COLUMNS = {
     "交易单号": "tx_id", "商户单号": "merchant_order", "备注": "note",
 }
 TEXT_COLUMNS = ["tx_type", "counterparty", "item", "direction", "method", "status", "merchant_order", "note"]
-SUMMARY_LABELS = ["收入", "支出", "中性交易"]
 
 
 def _is_blank(value) -> bool:
@@ -50,30 +48,11 @@ def read_wechat(src) -> ParsedBill:
         raise BillError(f"账单缺少这些列：{'、'.join(missing)}")
     position = {english: header.index(chinese) for chinese, english in WECHAT_COLUMNS.items()}
 
-    summary = _parse_summary(text)
-    period_start, period_end = _parse_period(text)
+    summary = parse_summary(text, "中性交易")
+    period_start, period_end = parse_period(text)
     records = [_parse_row(row, position, excel_row=i + 1)
                for i, row in enumerate(cells) if i > header_at and not all(_is_blank(v) for v in row)]
     return ParsedBill("微信", period_start, period_end, summary, pd.DataFrame(records, columns=ROW_COLUMNS))
-
-
-def _parse_summary(text: str) -> Summary:
-    count = re.search(r"共\s*(\d+)\s*笔记录", text)
-    found = {label: re.search(rf"{label}[：:]\s*(\d+)\s*笔\s*([\d,.]+)\s*元", text) for label in SUMMARY_LABELS}
-    missing = ([] if count else ["共几笔"]) + [label for label, m in found.items() if m is None]
-    if missing:
-        raise BillError(f"说明行里找不到笔数和金额汇总：缺{'、'.join(missing)}")
-    (ic, icents), (ec, ecents), (nc, ncents) = (
-        (int(found[label].group(1)), to_cents(found[label].group(2))) for label in SUMMARY_LABELS)
-    return Summary(int(count.group(1)), ic, icents, ec, ecents, nc, ncents)
-
-
-def _parse_period(text: str) -> tuple[str, str]:
-    start = re.search(r"起始时间[：:]\s*\[(.+?)\]", text)
-    end = re.search(r"终止时间[：:]\s*\[(.+?)\]", text)
-    if not (start and end):
-        raise BillError("说明行里找不到起止时间")
-    return start.group(1).strip(), end.group(1).strip()
 
 
 def _parse_row(row: list, position: dict[str, int], excel_row: int) -> dict:
