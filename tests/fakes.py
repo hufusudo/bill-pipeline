@@ -1,4 +1,6 @@
-"""造假的微信账单：版式照真实账单，数据全是编的。"""
+"""造假的微信、支付宝账单：版式照真实账单，数据全是编的。"""
+import csv
+import io
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -89,4 +91,59 @@ def write_wechat_xlsx(path, rows=SAMPLE_ROWS, *, title="微信支付账单明细
     for r in range(first_blank, first_blank + blank_rows_after):
         ws.cell(row=r, column=1, value=" ")
     wb.save(path)
+    return Path(path)
+
+
+ALIPAY_HEADER = ["交易时间", "交易分类", "交易对方", "对方账号", "商品说明", "收/支", "金额",
+                 "收/付款方式", "交易状态", "交易订单号", "商家订单号", "备注", ""]
+
+
+def make_alipay_row(n, day, hour, category, who, direction, amount, status="交易成功"):
+    return {
+        "交易时间": f"2026-10-{day:02d} {hour:02d}:00:00", "交易分类": category, "交易对方": who,
+        "对方账号": "/", "商品说明": "测试商品", "收/支": direction, "金额": f"{amount:.2f}",
+        "收/付款方式": "余额宝", "交易状态": status,
+        # 真实文件里两个单号前后都带制表符
+        "交易订单号": f"\t2026100122001{n:015d}\t", "商家订单号": f"\tM{n:010d}\t", "备注": "", "": "",
+    }
+
+
+ALIPAY_ROWS = [
+    make_alipay_row(1, 1, 12, "餐饮美食", "某快餐店", "支出", 18.5),
+    make_alipay_row(2, 2, 15, "日用百货", "某超市", "支出", 32.0),
+    make_alipay_row(3, 3, 20, "文化休闲", "某影院", "支出", 45.0),
+    make_alipay_row(4, 4, 9, "投资理财", "某基金", "不计收支", 92.7),
+]
+
+
+def write_alipay_csv(path, rows=ALIPAY_ROWS, *, encoding="gb18030", summary_override=None,
+                     with_account_line=True):
+    totals = {"收入": [0, Decimal(0)], "支出": [0, Decimal(0)], "不计收支": [0, Decimal(0)]}
+    for row in rows:
+        if row["收/支"] in totals:
+            totals[row["收/支"]][0] += 1
+            totals[row["收/支"]][1] += Decimal(row["金额"])
+    summary = {
+        "count": f"共{len(rows)}笔记录",
+        "income": "收入：{}笔 {:.2f}元".format(*totals["收入"]),
+        "expense": "支出：{}笔 {:.2f}元".format(*totals["支出"]),
+        "neutral": "不计收支：{}笔 {:.2f}元".format(*totals["不计收支"]),
+        **(summary_override or {}),
+    }
+    top = [
+        "-" * 84, "导出信息：", "姓名：[测试用户]",
+        "支付宝账户：[test@example.com]" if with_account_line else "",
+        "起始时间：[2026-10-01 00:00:00]    终止时间：[2026-10-31 23:59:59]",
+        "导出交易类型：[全部]", "导出时间：[2026-10-31 23:59:59]",
+        summary["count"], summary["income"], summary["expense"], summary["neutral"],
+        "", "特别提示：", *[f"{i}.测试提示；" for i in range(1, 9)], "",
+        "------------------------支付宝支付科技有限公司  电子客户回单------------------------",
+    ]
+    out = io.StringIO()
+    out.write("\n".join(line or "" for line in top) + "\n")
+    writer = csv.writer(out, lineterminator="\n")
+    writer.writerow(ALIPAY_HEADER)
+    for row in rows:
+        writer.writerow([row[name] for name in ALIPAY_HEADER])
+    Path(path).write_bytes(out.getvalue().encode(encoding))
     return Path(path)
