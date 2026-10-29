@@ -18,7 +18,7 @@ KNOWN = {
     ("支出", "扫二维码付款", "已转账"): (EXPENSE, "消费", None),
     ("支出", "转账", "对方已收钱"): (EXPENSE, "转账（归其他）", OTHER),
     ("收入", "转账", "已存入零钱"): (INCOME, "转账收入", None),
-    ("收入", "微信红包", "已存入零钱"): (INCOME, "收红包（待确认）", None),
+    ("收入", "微信红包", "已存入零钱"): (INCOME, "收红包", None),
 }
 # 支付宝的“交易分类”是它自己的消费分类，不分转账和消费，所以只看（收/支, 状态）
 ALIPAY_KNOWN = {
@@ -57,7 +57,7 @@ def classify(direction: str, tx_type: str, status: str, amount_cents: int, sourc
         result, reason, category = KNOWN[(direction, tx_type, status)]
         return Classified(result, reason, category, amount_cents)
     if direction == "支出" and tx_type == "微信红包":
-        return Classified(EXPENSE, "发红包（归其他，待确认）", OTHER, amount_cents)
+        return Classified(EXPENSE, "发红包（归其他）", OTHER, amount_cents)
     return Classified(UNKNOWN, f"未识别（{tx_type}/{status}）", None, 0)
 
 

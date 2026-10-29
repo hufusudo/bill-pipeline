@@ -46,10 +46,10 @@ Each row gets a result (`消费` spending / `收入` income / `不算` not count
 | Partial refund | Status like `已退款(￥x)` | Spending = amount − refunded | Pending confirmation |
 | WeChat merchant / QR-code payment | (`支出`, `商户消费`, `支付成功`), (`支出`, `扫二维码付款`, `已转账`) | Spending, categorized by counterparty | AI proposal |
 | Money transferred out (split bills, paying friends back) | (`支出`, `转账`, `对方已收钱`) | Spending, category fixed to "Other" | Author |
-| Red packet sent | (`支出`, `微信红包`) | Spending, "Other" | Pending confirmation |
+| Red packet sent | (`支出`, `微信红包`) | Spending, "Other" | AI proposal |
 | Money transferred in (allowance) | (`收入`, `转账`, `已存入零钱`) | Income | Author |
-| Red packet received | (`收入`, `微信红包`, `已存入零钱`) | Income | Pending confirmation |
-| Alipay payment | (`支出`, `交易成功`) | Spending, categorized by counterparty | AI proposal, pending confirmation |
+| Red packet received | (`收入`, `微信红包`, `已存入零钱`) | Income | AI proposal |
+| Alipay payment | (`支出`, `交易成功`) | Spending, categorized by counterparty | AI proposal |
 | Anything never seen before | None of the above | Not guessed: flagged as unknown, excluded, listed in the report | AI proposal |
 
 Spending is categorized by counterparty: the first import lists every uncategorized counterparty, and the user picks a category once. Later imports only ask about new ones.
