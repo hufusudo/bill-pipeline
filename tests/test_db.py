@@ -3,7 +3,8 @@ from datetime import datetime
 
 import pytest
 
-from bill_pipeline.db import (categorized, category_transactions, connect, daily_expense, import_history,
+from bill_pipeline.db import (add_category, categories, categorized, category_transactions, connect, daily_expense,
+                              import_history,
                               month_by_category, month_totals, months, recent_months, save_import,
                               set_category, unmapped_counterparties)
 from bill_pipeline.rules import apply_rules
@@ -104,3 +105,26 @@ def test_categorized_and_category_transactions(conn, tmp_path):
     assert category_transactions(conn, "2026-10", "吃饭") == [
         ("2026-10-03 08:00:00", "张阿姨", "/", 800), ("2026-10-01 12:00:00", "食堂一楼", "/", 1250)]
     assert category_transactions(conn, "2026-10", "其他") == [("2026-10-03 21:00:00", "球友A", "/", 2500)]
+
+
+def test_default_categories(conn, tmp_path):
+    assert categories(conn) == ["吃饭", "运动", "购物", "交通", "娱乐", "其他"]
+    assert categories(connect(tmp_path / "data" / "t.db")) == ["吃饭", "运动", "购物", "交通", "娱乐", "其他"]
+
+
+@pytest.mark.parametrize("name, message", [
+    ("  ", "分类名不能为空"), ("一二三四五六七八九", "分类名最多 8 个字"),
+    ("吃饭", "已经有这个分类了"), ("未归类", "保留的名字"),
+])
+def test_add_category_errors(conn, name, message):
+    with pytest.raises(ValueError, match=message):
+        add_category(conn, name)
+
+
+def test_add_category_and_use_it(conn, tmp_path):
+    assert add_category(conn, " 宠物 ") == "宠物"
+    assert categories(conn)[-1] == "宠物"
+    bill, rows = _prepared(tmp_path)
+    save_import(conn, bill, rows, "b.xlsx")
+    set_category(conn, "星光球馆", "宠物")
+    assert ("宠物", 4000) in month_by_category(conn, "2026-10")

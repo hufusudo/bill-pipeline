@@ -6,14 +6,13 @@ from pathlib import Path
 
 from nicegui import ui
 
-from bill_pipeline.db import (categorized, category_transactions, connect, daily_expense, import_history,
+from bill_pipeline.db import (categories, categorized, category_transactions, connect, daily_expense, import_history,
                               month_by_category, month_totals, months, recent_months, set_category,
                               unmapped_counterparties)
 from bill_pipeline.model import BillError
 from bill_pipeline.pipeline import ImportReport, import_bill
 from bill_pipeline.report import change_ratio, month_reconciliation, previous_month
-from bill_pipeline.rules import CATEGORIES
-from web.theme import (CATEGORY_COLORS, COUNT_UP_JS, CSS, daily_option, donut_option, money, monthly_option,
+from web.theme import (COUNT_UP_JS, CSS, EXTRA_COLOR, category_colors, daily_option, donut_option, money, monthly_option,
                        waterfall_option)
 
 DEFAULT_DB = Path(__file__).resolve().parents[1] / "data" / "bills.db"
@@ -82,12 +81,14 @@ def render_overview(ctx: Context) -> None:
         ui.label("这个月还没有消费").classes("empty")
         return
     total = sum(cents for _, cents in by_category)
+    order = categories(ctx.conn)
+    colors = category_colors(order)
     with ui.element("div").classes("split"):
-        ui.echart(donut_option(by_category), on_point_click=lambda e: open_category(ctx, e.name)).classes("chart")
+        ui.echart(donut_option(by_category, order), on_point_click=lambda e: open_category(ctx, e.name)).classes("chart")
         with ui.element("div").classes("legend"):
             for category, cents in by_category:
                 with ui.element("div").classes("legend-row").mark(f"legend-{category}") as row:
-                    ui.element("span").classes("dot").style(f"background:{CATEGORY_COLORS.get(category, '#c3c9d3')}")
+                    ui.element("span").classes("dot").style(f"background:{colors.get(category, EXTRA_COLOR)}")
                     ui.label(category)
                     ui.label(money(cents)).classes("amt")
                     ui.label(f"{round(cents / total * 100)}%").classes("pct")
@@ -228,7 +229,7 @@ def render_sort(ctx: Context) -> None:
                 hint = f"支付宝分类：{c.tx_type}" if c.source == "支付宝" else c.tx_type
                 ui.label(f"{hint} · 最近一笔 {c.last_time[5:16]}").classes("who-meta")
                 with ui.element("div").classes("chips"):
-                    for category in CATEGORIES:
+                    for category in categories(ctx.conn):
                         ui.label(category).classes("chip").mark(f"chip-{category}") \
                             .on("click", lambda category=category, name=c.counterparty: choose(name, category))
             ui.label("跳过，以后再说 →").classes("skip").mark("skip") \
@@ -242,7 +243,7 @@ def render_sort(ctx: Context) -> None:
                 with ui.element("div").classes("recat-row"):
                     ui.label(name)
                     ui.label(f"{count} 笔 · {money(cents)}").classes("note")
-                    ui.select(CATEGORIES, value=category,
+                    ui.select(categories(ctx.conn), value=category,
                               on_change=lambda e, name=name: set_category(ctx.conn, name, e.value)) \
                         .props("dense outlined").mark(f"recat-{name}")
 

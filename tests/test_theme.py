@@ -1,10 +1,14 @@
-from bill_pipeline.rules import CATEGORIES
+from bill_pipeline.rules import DEFAULT_CATEGORIES
 from bill_pipeline.validate import ReconLine
-from web.theme import CATEGORY_COLORS, daily_option, donut_option, money, monthly_option, waterfall_option
+from web.theme import category_colors, daily_option, donut_option, money, monthly_option, waterfall_option
 
 
-def test_every_category_has_a_color():
-    assert set(CATEGORY_COLORS) == set(CATEGORIES) | {"未归类"}
+def test_category_colors():
+    assert category_colors(DEFAULT_CATEGORIES) == {
+        "吃饭": "#1baf7a", "运动": "#2a78d6", "购物": "#eb6834", "交通": "#6250d6", "娱乐": "#eda100",
+        "其他": "#c3c9d3", "未归类": "#e5e9ef"}
+    more = category_colors(DEFAULT_CATEGORIES + ["宠物", "学习", "人情", "旅行"])
+    assert [more[n] for n in ["宠物", "学习", "人情", "旅行"]] == ["#e87ba4", "#008300", "#e34948", "#9aa3af"]
 
 
 def test_money():
@@ -14,16 +18,18 @@ def test_money():
 
 
 def test_donut_keeps_fixed_order_and_colors():
-    option = donut_option([("其他", 2500), ("运动", 4000), ("吃饭", 2050), ("未归类", 100), ("交通", 0)])
+    option = donut_option([("其他", 2500), ("运动", 4000), ("吃饭", 2050), ("未归类", 100), ("交通", 0)],
+                          DEFAULT_CATEGORIES)
     data = option["series"][0]["data"]
+    colors = category_colors(DEFAULT_CATEGORIES)
     assert [d["name"] for d in data] == ["吃饭", "运动", "其他", "未归类"]
-    assert [d["itemStyle"]["color"] for d in data] == [CATEGORY_COLORS[n] for n in ["吃饭", "运动", "其他", "未归类"]]
+    assert [d["itemStyle"]["color"] for d in data] == [colors[n] for n in ["吃饭", "运动", "其他", "未归类"]]
     assert data[1]["text"] == "¥40.00"
     assert option["graphic"]["style"]["text"] == "花得最多\n运动 46%"
 
 
 def test_donut_empty():
-    option = donut_option([])
+    option = donut_option([], DEFAULT_CATEGORIES)
     assert option["series"][0]["data"] == []
     assert "graphic" not in option
 

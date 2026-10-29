@@ -1,6 +1,7 @@
 """界面的颜色、样式、动画脚本和图表配置。图表配置都是纯函数：输入数据，返回 ECharts 的 option 字典。"""
 from decimal import Decimal
 
+from bill_pipeline.rules import OTHER
 from bill_pipeline.validate import ReconLine
 
 ACCENT = "#1baf7a"
@@ -12,11 +13,9 @@ DIM = "#dde3ea"
 BASE = "#c3c9d3"
 MINUS = "#eb6834"
 
-# 环形图的扇区按这个顺序排。相邻的几对颜色用 dataviz 的配色脚本验证过，按金额排序会打乱
-CATEGORY_COLORS = {
-    "吃饭": "#1baf7a", "运动": "#2a78d6", "购物": "#eb6834", "交通": "#6250d6",
-    "娱乐": "#eda100", "其他": "#c3c9d3", "未归类": "#e5e9ef",
-}
+# 分类颜色按分类顺序取。这 8 种颜色按这个顺序相邻时，用 dataviz 的配色脚本验证过；按金额排序会打乱
+PALETTE = ["#1baf7a", "#2a78d6", "#eb6834", "#6250d6", "#eda100", "#e87ba4", "#008300", "#e34948"]
+OTHER_COLOR, UNCATEGORIZED_COLOR, EXTRA_COLOR = "#c3c9d3", "#e5e9ef", "#9aa3af"
 
 AXIS = {"axisLine": {"show": False}, "axisTick": {"show": False}}
 AXIS_LABEL = {"color": MUTED, "fontSize": 12}
@@ -33,10 +32,21 @@ def money(cents: int) -> str:
     return f"{sign}¥{Decimal(abs(int(cents))) / 100:,.2f}"
 
 
-def donut_option(by_category: list[tuple[str, int]]) -> dict:
+def category_colors(names: list[str]) -> dict[str, str]:
+    """“其他”灰色，“未归类”浅灰；其余按顺序用色板，超过 8 个的用中灰，靠名字区分。"""
+    colored = [name for name in names if name != OTHER]
+    colors = {name: PALETTE[i] if i < len(PALETTE) else EXTRA_COLOR for i, name in enumerate(colored)}
+    return {**colors, OTHER: OTHER_COLOR, "未归类": UNCATEGORIZED_COLOR}
+
+
+def donut_option(by_category: list[tuple[str, int]], order: list[str]) -> dict:
+    """扇区按分类顺序排，颜色跟着分类走，不跟着金额排名走。"""
     amounts = dict(by_category)
-    data = [{"name": name, "value": amounts[name] / 100, "text": money(amounts[name]), "itemStyle": {"color": color}}
-            for name, color in CATEGORY_COLORS.items() if amounts.get(name, 0) > 0]
+    colors = category_colors(order)
+    names = order + ["未归类"] + [name for name in amounts if name not in order and name != "未归类"]
+    data = [{"name": name, "value": amounts[name] / 100, "text": money(amounts[name]),
+             "itemStyle": {"color": colors.get(name, EXTRA_COLOR)}}
+            for name in names if amounts.get(name, 0) > 0]
     option = {
         "tooltip": {"trigger": "item", **TOOLTIP,
                     ":formatter": "p => `${p.marker}${p.name}　${p.data.text}（${p.percent}%）`"},

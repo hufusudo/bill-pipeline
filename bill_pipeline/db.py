@@ -7,7 +7,7 @@ from typing import NamedTuple
 import pandas as pd
 
 from bill_pipeline.model import ParsedBill
-from bill_pipeline.rules import CATEGORIES, EXPENSE, INCOME
+from bill_pipeline.rules import DEFAULT_CATEGORIES, EXPENSE, INCOME
 
 UNCATEGORIZED = "未归类"
 
@@ -47,6 +47,10 @@ CREATE TABLE IF NOT EXISTS counterparty_categories (
     counterparty TEXT PRIMARY KEY,
     category TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS categories (
+    name TEXT PRIMARY KEY,
+    position INTEGER NOT NULL
+);
 """
 
 TX_COLUMNS = [
@@ -66,6 +70,9 @@ def connect(path) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)
+    with conn:
+        conn.executemany("INSERT OR IGNORE INTO categories (name, position) VALUES (?, ?)",
+                         [(name, i) for i, name in enumerate(DEFAULT_CATEGORIES, start=1)])
     return conn
 
 
@@ -130,7 +137,7 @@ def categorized(conn: sqlite3.Connection) -> list[tuple[str, str, int, int]]:
 
 
 def set_category(conn: sqlite3.Connection, counterparty: str, category: str) -> None:
-    if category not in CATEGORIES:
+    if category not in categories(conn):
         raise ValueError(f"没有这个类别：{category}")
     with conn:
         conn.execute(
@@ -212,3 +219,25 @@ def month_rows(conn: sqlite3.Connection, month: str) -> pd.DataFrame:
     return pd.read_sql_query(
         "SELECT direction, amount_cents, counted_cents, result, reason FROM transactions "
         "WHERE substr(tx_time, 1, 7) = ?", conn, params=(month,))
+
+
+def categories(conn: sqlite3.Connection) -> list[str]:
+    """当前的分类，按添加顺序。"""
+    return [name for (name,) in conn.execute("SELECT name FROM categories ORDER BY position")]
+
+
+def add_category(conn: sqlite3.Connection, name: str) -> str:
+    """添加一个新分类，排在最后；返回去掉首尾空白后的名字。"""
+    name = name.strip()
+    if not name:
+        raise ValueError("分类名不能为空")
+    if len(name) > 8:
+        raise ValueError("分类名最多 8 个字")
+    if name == UNCATEGORIZED:
+        raise ValueError("“未归类”是保留的名字")
+    if name in categories(conn):
+        raise ValueError("已经有这个分类了")
+    with conn:
+        conn.execute("INSERT INTO categories (name, position) "
+                     "VALUES (?, (SELECT COALESCE(MAX(position), 0) + 1 FROM categories))", (name,))
+    return name
