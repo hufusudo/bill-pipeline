@@ -1,3 +1,7 @@
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+filterwarnings = [
+    # Streamlit 1.66 画图时内部用了 pandas 3.1 弃用的 reset_index(inplace=True)，不是本项目的代码
+    "ignore:The inplace keyword in DataFrame.reset_index is deprecated",
+]
