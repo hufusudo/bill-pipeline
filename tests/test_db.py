@@ -5,7 +5,8 @@ import pytest
 
 from bill_pipeline.db import (add_category, categories, categorized, category_transactions, connect, daily_expense,
                               import_history,
-                              month_by_category, month_totals, months, recent_months, save_import,
+                              mapped_counterparties, month_by_category, month_totals, months, recent_months,
+                              save_import,
                               set_category, unmapped_counterparties)
 from bill_pipeline.rules import apply_rules
 from bill_pipeline.wechat import read_wechat
@@ -64,6 +65,10 @@ def test_categories_and_month_report(conn, tmp_path):
     set_category(conn, "食堂一楼", "吃饭")
     set_category(conn, "张阿姨", "吃饭")
     assert unmapped_counterparties(conn) == []
+    mapped = mapped_counterparties(conn)
+    assert [(card.counterparty, category) for card, category in mapped] == [
+        ("星光球馆", "运动"), ("食堂一楼", "吃饭"), ("张阿姨", "吃饭")]
+    assert mapped[0][0] == ("星光球馆", 1, 4000, "微信", "商户消费", "2026-10-02 19:00:00", "/")
     assert months(conn) == ["2026-10"]
     assert month_totals(conn, "2026-10") == (8550, 128800)
     assert month_by_category(conn, "2026-10") == [("运动", 4000), ("其他", 2500), ("吃饭", 2050)]

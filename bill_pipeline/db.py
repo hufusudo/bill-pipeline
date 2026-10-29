@@ -115,9 +115,9 @@ class Card(NamedTuple):
     item: str
 
 
-def unmapped_counterparties(conn: sqlite3.Connection) -> list[Card]:
-    """还没归类的消费交易对方，金额大的在前；附上最近一笔的来源、类型和时间。"""
-    rows = conn.execute("""
+def _cards(conn: sqlite3.Connection, mapped: bool) -> list[tuple]:
+    """消费交易对方的卡片，最后多一列用户选的类别。mapped 为真时只要归过类的，否则只要没归过类的。"""
+    return conn.execute(f"""
         SELECT t.counterparty, COUNT(*), SUM(t.counted_cents),
                (SELECT x.source FROM transactions x WHERE x.counterparty = t.counterparty
                 AND x.result = :expense AND x.category IS NULL ORDER BY x.tx_time DESC LIMIT 1),
@@ -125,14 +125,24 @@ def unmapped_counterparties(conn: sqlite3.Connection) -> list[Card]:
                 AND x.result = :expense AND x.category IS NULL ORDER BY x.tx_time DESC LIMIT 1),
                MAX(t.tx_time),
                (SELECT x.item FROM transactions x WHERE x.counterparty = t.counterparty
-                AND x.result = :expense AND x.category IS NULL ORDER BY x.tx_time DESC LIMIT 1)
+                AND x.result = :expense AND x.category IS NULL ORDER BY x.tx_time DESC LIMIT 1),
+               m.category
         FROM transactions t
         LEFT JOIN counterparty_categories m ON m.counterparty = t.counterparty
-        WHERE t.result = :expense AND t.category IS NULL AND m.category IS NULL
+        WHERE t.result = :expense AND t.category IS NULL AND m.category IS {"NOT NULL" if mapped else "NULL"}
         GROUP BY t.counterparty
         ORDER BY SUM(t.counted_cents) DESC, t.counterparty
     """, {"expense": EXPENSE}).fetchall()
-    return [Card(*row) for row in rows]
+
+
+def unmapped_counterparties(conn: sqlite3.Connection) -> list[Card]:
+    """还没归类的消费交易对方，金额大的在前；附上最近一笔的来源、类型和时间。"""
+    return [Card(*row[:-1]) for row in _cards(conn, mapped=False)]
+
+
+def mapped_counterparties(conn: sqlite3.Connection) -> list[tuple[Card, str]]:
+    """用户归过类的消费交易对方，以及用户选的类别；评测分类建议时拿来当标准答案。"""
+    return [(Card(*row[:-1]), row[-1]) for row in _cards(conn, mapped=True)]
 
 
 def categorized(conn: sqlite3.Connection) -> list[tuple[str, str, int, int]]:

@@ -86,10 +86,11 @@ OPENAI_BASE_URL=https://api.deepseek.com
 AGENT_MODEL=deepseek-flash
 ```
 
-Evaluate the assistant on your own database. It calls the API, costs a little, and prints only the counts:
+Evaluate on your own database. Both modes call the API, cost a little, and print only counts. `ask` checks answers against amounts computed from the database; `suggest` sends the merchants you have already categorized, without your categories, and counts how many the model gets right.
 
 ```bash
-.venv/bin/python -m scripts.eval_ai
+.venv/bin/python -m scripts.eval_ai ask
+.venv/bin/python -m scripts.eval_ai suggest
 ```
 
 Tests never call the API: a fake client replays scripted replies, and `tests/conftest.py` hides any real key.
