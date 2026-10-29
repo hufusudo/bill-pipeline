@@ -43,7 +43,7 @@ if not unmapped:
 else:
     with st.form("categorize"):
         choices = {name: st.selectbox(f"{name}（{n} 笔，{yuan(cents)} 元）", [SKIP] + CATEGORIES, key=f"cat_{name}")
-                   for name, n, cents in unmapped}
+                   for name, n, cents, *_ in unmapped}
         if st.form_submit_button("保存归类"):
             for name, category in choices.items():
                 if category != SKIP:

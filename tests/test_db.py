@@ -1,8 +1,10 @@
 import sqlite3
+from datetime import datetime
 
 import pytest
 
-from bill_pipeline.db import (connect, month_by_category, month_totals, months, save_import,
+from bill_pipeline.db import (categorized, category_transactions, connect, daily_expense, import_history,
+                              month_by_category, month_totals, months, recent_months, save_import,
                               set_category, unmapped_counterparties)
 from bill_pipeline.rules import apply_rules
 from bill_pipeline.wechat import read_wechat
@@ -51,7 +53,11 @@ def test_save_import_is_all_or_nothing(conn, tmp_path):
 def test_categories_and_month_report(conn, tmp_path):
     bill, rows = _prepared(tmp_path)
     save_import(conn, bill, rows, "b.xlsx")
-    assert unmapped_counterparties(conn) == [("星光球馆", 1, 4000), ("食堂一楼", 1, 1250), ("张阿姨", 1, 800)]
+    assert unmapped_counterparties(conn) == [
+        ("星光球馆", 1, 4000, "微信", "商户消费", "2026-10-02 19:00:00"),
+        ("食堂一楼", 1, 1250, "微信", "商户消费", "2026-10-01 12:00:00"),
+        ("张阿姨", 1, 800, "微信", "扫二维码付款", "2026-10-03 08:00:00"),
+    ]
     assert ("未归类", 6050) in month_by_category(conn, "2026-10")
     set_category(conn, "星光球馆", "运动")
     set_category(conn, "食堂一楼", "吃饭")
@@ -65,3 +71,36 @@ def test_categories_and_month_report(conn, tmp_path):
 def test_set_category_rejects_unknown(conn):
     with pytest.raises(ValueError):
         set_category(conn, "某店", "零食")
+
+
+def test_daily_expense(conn, tmp_path):
+    bill, rows = _prepared(tmp_path)
+    save_import(conn, bill, rows, "b.xlsx")
+    days = daily_expense(conn, "2026-10")
+    assert days[:4] == [("2026-10-01", 1250), ("2026-10-02", 4000), ("2026-10-03", 3300), ("2026-10-04", 0)]
+    assert len(days) == 9
+    assert daily_expense(conn, "2026-09") == []
+
+
+def test_recent_months_and_history(conn, tmp_path):
+    september = dict(make_row(11, 1, 9, "商户消费", "食堂一楼", "支出", 10.0, "支付成功"),
+                     **{"交易时间": datetime(2026, 9, 30, 12)})
+    for name, rows in (("b.xlsx", SAMPLE_ROWS), ("c.xlsx", [september])):
+        bill, prepared = _prepared(tmp_path, name, rows=rows)
+        save_import(conn, bill, prepared, name)
+    assert recent_months(conn) == [("2026-09", 1000), ("2026-10", 8550)]
+    assert [h[0] for h in import_history(conn)] == ["c.xlsx", "b.xlsx"]
+    assert import_history(conn)[0][4:] == (1, 0)
+
+
+def test_categorized_and_category_transactions(conn, tmp_path):
+    bill, rows = _prepared(tmp_path)
+    save_import(conn, bill, rows, "b.xlsx")
+    assert len(category_transactions(conn, "2026-10", "未归类")) == 3
+    set_category(conn, "星光球馆", "运动")
+    set_category(conn, "食堂一楼", "吃饭")
+    set_category(conn, "张阿姨", "吃饭")
+    assert categorized(conn) == [("星光球馆", "运动", 1, 4000), ("食堂一楼", "吃饭", 1, 1250), ("张阿姨", "吃饭", 1, 800)]
+    assert category_transactions(conn, "2026-10", "吃饭") == [
+        ("2026-10-03 08:00:00", "张阿姨", "/", 800), ("2026-10-01 12:00:00", "食堂一楼", "/", 1250)]
+    assert category_transactions(conn, "2026-10", "其他") == [("2026-10-03 21:00:00", "球友A", "/", 2500)]

@@ -2,6 +2,7 @@
 import sqlite3
 from datetime import datetime
 from pathlib import Path
+from typing import NamedTuple
 
 import pandas as pd
 
@@ -89,15 +90,42 @@ def save_import(conn: sqlite3.Connection, bill: ParsedBill, rows: pd.DataFrame,
     return new, skipped
 
 
-def unmapped_counterparties(conn: sqlite3.Connection) -> list[tuple[str, int, int]]:
-    """还没归类的消费交易对方：（交易对方, 笔数, 计入金额），金额大的在前。"""
-    return conn.execute("""
-        SELECT t.counterparty, COUNT(*), SUM(t.counted_cents)
+class Card(NamedTuple):
+    """一个还没归类的交易对方，带上最近一笔的提示。"""
+    counterparty: str
+    count: int
+    cents: int
+    source: str
+    tx_type: str
+    last_time: str
+
+
+def unmapped_counterparties(conn: sqlite3.Connection) -> list[Card]:
+    """还没归类的消费交易对方，金额大的在前；附上最近一笔的来源、类型和时间。"""
+    rows = conn.execute("""
+        SELECT t.counterparty, COUNT(*), SUM(t.counted_cents),
+               (SELECT x.source FROM transactions x WHERE x.counterparty = t.counterparty
+                AND x.result = :expense AND x.category IS NULL ORDER BY x.tx_time DESC LIMIT 1),
+               (SELECT x.tx_type FROM transactions x WHERE x.counterparty = t.counterparty
+                AND x.result = :expense AND x.category IS NULL ORDER BY x.tx_time DESC LIMIT 1),
+               MAX(t.tx_time)
         FROM transactions t
         LEFT JOIN counterparty_categories m ON m.counterparty = t.counterparty
-        WHERE t.result = ? AND t.category IS NULL AND m.category IS NULL
+        WHERE t.result = :expense AND t.category IS NULL AND m.category IS NULL
         GROUP BY t.counterparty
         ORDER BY SUM(t.counted_cents) DESC, t.counterparty
+    """, {"expense": EXPENSE}).fetchall()
+    return [Card(*row) for row in rows]
+
+
+def categorized(conn: sqlite3.Connection) -> list[tuple[str, str, int, int]]:
+    """已经归过类的交易对方：（交易对方, 类别, 笔数, 金额），金额大的在前。"""
+    return conn.execute("""
+        SELECT m.counterparty, m.category, COUNT(t.tx_id), COALESCE(SUM(t.counted_cents), 0)
+        FROM counterparty_categories m
+        LEFT JOIN transactions t ON t.counterparty = m.counterparty AND t.result = ? AND t.category IS NULL
+        GROUP BY m.counterparty, m.category
+        ORDER BY 4 DESC, m.counterparty
     """, (EXPENSE,)).fetchall()
 
 
@@ -135,3 +163,52 @@ def month_by_category(conn: sqlite3.Connection, month: str) -> list[tuple[str, i
         GROUP BY cat
         ORDER BY cents DESC, cat
     """, (UNCATEGORIZED, EXPENSE, month)).fetchall()
+
+
+def category_transactions(conn: sqlite3.Connection, month: str, category: str) -> list[tuple[str, str, str, int]]:
+    """某月某一类的每一笔消费：（时间, 交易对方, 商品, 计入金额），晚的在前。"""
+    return conn.execute("""
+        SELECT t.tx_time, t.counterparty, t.item, t.counted_cents
+        FROM transactions t
+        LEFT JOIN counterparty_categories m ON m.counterparty = t.counterparty
+        WHERE t.result = ? AND substr(t.tx_time, 1, 7) = ? AND COALESCE(t.category, m.category, ?) = ?
+        ORDER BY t.tx_time DESC
+    """, (EXPENSE, month, UNCATEGORIZED, category)).fetchall()
+
+
+def daily_expense(conn: sqlite3.Connection, month: str) -> list[tuple[str, int]]:
+    """这个月每天的消费：从 1 号排到最后一笔交易那天，没有消费的日子记 0。"""
+    last = conn.execute("SELECT MAX(substr(tx_time, 1, 10)) FROM transactions WHERE substr(tx_time, 1, 7) = ?",
+                        (month,)).fetchone()[0]
+    if last is None:
+        return []
+    spent = dict(conn.execute("""
+        SELECT substr(tx_time, 1, 10), SUM(counted_cents) FROM transactions
+        WHERE result = ? AND substr(tx_time, 1, 7) = ? GROUP BY 1
+    """, (EXPENSE, month)).fetchall())
+    days = (f"{month}-{d:02d}" for d in range(1, int(last[8:10]) + 1))
+    return [(day, spent.get(day, 0)) for day in days]
+
+
+def recent_months(conn: sqlite3.Connection, n: int = 6) -> list[tuple[str, int]]:
+    """最近 n 个有交易的月份，以及每月的消费，按时间从早到晚。"""
+    rows = conn.execute("""
+        SELECT substr(tx_time, 1, 7) AS month, COALESCE(SUM(CASE WHEN result = ? THEN counted_cents END), 0)
+        FROM transactions GROUP BY month ORDER BY month DESC LIMIT ?
+    """, (EXPENSE, n)).fetchall()
+    return rows[::-1]
+
+
+def import_history(conn: sqlite3.Connection, limit: int = 5) -> list[tuple[str, str, str, str, int, int]]:
+    """最近几次导入：（文件名, 来源, 开始, 结束, 新增, 跳过），最新的在前。"""
+    return conn.execute("""
+        SELECT file_name, source, period_start, period_end, rows_new, rows_skipped
+        FROM imports ORDER BY id DESC LIMIT ?
+    """, (limit,)).fetchall()
+
+
+def month_rows(conn: sqlite3.Connection, month: str) -> pd.DataFrame:
+    """这个月的明细里对账要用的几列。"""
+    return pd.read_sql_query(
+        "SELECT direction, amount_cents, counted_cents, result, reason FROM transactions "
+        "WHERE substr(tx_time, 1, 7) = ?", conn, params=(month,))
