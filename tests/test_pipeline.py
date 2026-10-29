@@ -6,7 +6,7 @@ from bill_pipeline.db import connect, month_totals
 from bill_pipeline.model import BillError
 from bill_pipeline.pipeline import import_bill
 from bill_pipeline.validate import ReconLine
-from tests.fakes import SAMPLE_ROWS, make_row, write_wechat_xlsx
+from tests.fakes import SAMPLE_ROWS, make_row, write_alipay_csv, write_wechat_xlsx
 
 
 @pytest.fixture
@@ -37,7 +37,20 @@ def test_rejected_bill_saves_nothing(conn, tmp_path):
 
 def test_unsupported_file_type(conn):
     with pytest.raises(BillError, match="只支持微信"):
-        import_bill(conn, io.BytesIO(b"a,b"), "bill.csv")
+        import_bill(conn, io.BytesIO(b"%PDF"), "bill.pdf")
+
+
+def test_import_alipay_csv(conn, tmp_path):
+    report = import_bill(conn, write_alipay_csv(tmp_path / "a.csv"), "a.csv")
+    assert (report.source, report.new, report.unknown) == ("支付宝", 4, 0)
+    assert ReconLine("中性交易", "减：中性交易", 1, 9270) in report.recon
+    assert month_totals(conn, "2026-10") == (9550, 0)
+
+
+def test_wechat_and_alipay_in_one_db(conn, tmp_path):
+    import_bill(conn, write_wechat_xlsx(tmp_path / "b.xlsx"), "b.xlsx")
+    import_bill(conn, write_alipay_csv(tmp_path / "a.csv"), "a.csv")
+    assert month_totals(conn, "2026-10") == (8550 + 9550, 156400)
 
 
 def test_unknown_rows_are_imported_but_flagged(conn, tmp_path):

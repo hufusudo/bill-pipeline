@@ -21,7 +21,8 @@ st.title("账单流水线")
 conn = connect(DB_PATH)
 
 st.header("导入账单")
-files = st.file_uploader("上传微信账单（.xlsx），可以一次选多份", type=["xlsx"], accept_multiple_files=True)
+files = st.file_uploader("上传微信（.xlsx）或支付宝（.csv）账单，可以一次选多份", type=["xlsx", "csv"],
+                         accept_multiple_files=True)
 if files and st.button("导入"):
     for f in files:
         try:
