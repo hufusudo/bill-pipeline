@@ -141,6 +141,11 @@ tests/          pytest suite with generated fake bills, plus NiceGUI simulated-u
 docs/           design document and implementation plan (Chinese)
 ```
 
+## Known limitations
+
+- **Refunds that happen after an export.** A stored row is never updated: re-imports skip rows that already exist. If a purchase was exported as paid and refunded later, the later export contains only the refund row, which is excluded, so the purchase still counts as spending. The three checks look at one file at a time, so they cannot see this. In the two refunds seen so far, the merchant order numbers of the refund and the original overlap (one contains the other), which may allow matching them later; two samples are too few to rely on.
+- **Alipay refunds.** The Alipay rules only know "expense + 交易成功", and every "不计收支" row is treated as neutral without a warning. No Alipay refund has appeared in real data yet, so how one looks in the export is unverified. Add a rule when the first one appears.
+
 ## Credits
 
 Requirements, cleaning rules and validation design by Huang Fei. Code written with AI coding assistance (Claude Code).
@@ -149,3 +154,4 @@ Requirements, cleaning rules and validation design by Huang Fei. Code written wi
 
 - Renaming and deleting categories (this version can only add them).
 - Recategorizing single transactions, for example a split-bill transfer that should count as sports.
+- Matching refunds to their original purchases across exports (see Known limitations).
