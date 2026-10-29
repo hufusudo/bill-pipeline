@@ -184,6 +184,7 @@ tests/
   - 系统提示写明：只用工具结果回答；金额写到分；查不到就直说；没说月份时默认用 `{default_month}`。
   - 最多 5 轮。超过了就返回 `Answer("这个问题我没能在 5 步内查完，换个问法试试。", steps)`。
   - 接口出错转成 `AIError`。
+  - 模型的回复原样追加进对话记录：DeepSeek 默认开着思考模式，带工具时必须把 `reasoning_content` 交回去，否则报 400（10-29 查官方文档确认）。
 
 **测试（`tests/test_assistant.py`，用 SAMPLE 导入后的库）：**
 - `test_run_tool_month_summary`：`run_tool(conn, "month_summary", {"month": "2026-10"})` 里的消费是 `"85.50"`。

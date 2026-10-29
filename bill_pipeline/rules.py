@@ -10,6 +10,8 @@ from bill_pipeline.convert import to_cents
 DEFAULT_CATEGORIES = ["吃饭", "运动", "购物", "交通", "娱乐", "其他"]
 EXPENSE, INCOME, EXCLUDED, UNKNOWN = "消费", "收入", "不算", "未识别"
 OTHER = "其他"
+# 交易类型是这些的，交易对方多半是真人：分类建议不发给 AI，问答里名字换成“个人收款”
+PERSON_TYPES = {"扫二维码付款", "转账", "微信红包", "转账红包"}
 
 FAILED_STATUSES = {"交易关闭", "支付失败"}
 PARTIAL_REFUND = re.compile(r"^已退款[（(][￥¥]?(\d+(?:\.\d{1,2})?)[)）]$")

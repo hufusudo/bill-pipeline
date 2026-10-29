@@ -7,7 +7,7 @@ from typing import NamedTuple
 import pandas as pd
 
 from bill_pipeline.model import ParsedBill
-from bill_pipeline.rules import DEFAULT_CATEGORIES, EXPENSE, INCOME
+from bill_pipeline.rules import DEFAULT_CATEGORIES, EXPENSE, INCOME, PERSON_TYPES
 
 UNCATEGORIZED = "未归类"
 
@@ -155,6 +155,52 @@ def set_category(conn: sqlite3.Connection, counterparty: str, category: str) -> 
             "ON CONFLICT(counterparty) DO UPDATE SET category = excluded.category",
             (counterparty, category))
         conn.execute("UPDATE ai_suggestions SET chosen = ? WHERE counterparty = ?", (category, counterparty))
+
+
+class Found(NamedTuple):
+    """查明细查到的一笔交易；分类只有消费才有。"""
+    tx_time: str
+    counterparty: str
+    item: str
+    direction: str
+    amount_cents: int
+    counted_cents: int
+    result: str
+    reason: str
+    category: str | None
+
+
+def find_transactions(conn: sqlite3.Connection, month: str | None = None, category: str | None = None,
+                      keyword: str | None = None) -> list[Found]:
+    """按月份、分类、关键词（匹配交易对方和商品）查明细，是 None 的条件不限。晚的在前。"""
+    rows = conn.execute("""
+        SELECT t.tx_time, t.counterparty, t.item, t.direction, t.amount_cents, t.counted_cents, t.result, t.reason,
+               CASE WHEN t.result = :expense THEN COALESCE(t.category, m.category, :uncat) END
+        FROM transactions t
+        LEFT JOIN counterparty_categories m ON m.counterparty = t.counterparty
+        WHERE (:month IS NULL OR substr(t.tx_time, 1, 7) = :month)
+          AND (:category IS NULL OR (t.result = :expense AND COALESCE(t.category, m.category, :uncat) = :category))
+          AND (:keyword IS NULL OR t.counterparty LIKE '%' || :keyword || '%' OR t.item LIKE '%' || :keyword || '%')
+        ORDER BY t.tx_time DESC
+    """, {"expense": EXPENSE, "uncat": UNCATEGORIZED, "month": month, "category": category,
+          "keyword": keyword}).fetchall()
+    return [Found(*row) for row in rows]
+
+
+def person_counterparties(conn: sqlite3.Connection) -> set[str]:
+    """有过转账、红包、扫个人二维码这类交易的交易对方，也就是真人。"""
+    marks = ", ".join("?" * len(PERSON_TYPES))
+    return {name for (name,) in conn.execute(
+        f"SELECT DISTINCT counterparty FROM transactions WHERE tx_type IN ({marks})", sorted(PERSON_TYPES))}
+
+
+def month_by_counterparty(conn: sqlite3.Connection, month: str) -> list[tuple[str, int, int]]:
+    """这个月每个交易对方的消费：（交易对方, 笔数, 金额），金额大的在前。"""
+    return conn.execute("""
+        SELECT counterparty, COUNT(*), SUM(counted_cents) FROM transactions
+        WHERE result = ? AND substr(tx_time, 1, 7) = ?
+        GROUP BY counterparty ORDER BY 3 DESC, counterparty
+    """, (EXPENSE, month)).fetchall()
 
 
 def months(conn: sqlite3.Connection) -> list[str]:

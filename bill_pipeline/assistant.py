@@ -1,0 +1,183 @@
+"""问答：模型调用只读的查询工具，按查到的结果回答关于账单的问题。设计见设计文档第 15 节。"""
+import json
+import re
+import sqlite3
+from datetime import date
+from decimal import Decimal
+from typing import NamedTuple
+
+from bill_pipeline.ai import AIError
+from bill_pipeline.db import (UNCATEGORIZED, categories, category_transactions, daily_expense, find_transactions,
+                              month_by_category, month_by_counterparty, month_totals, months, person_counterparties)
+from bill_pipeline.rules import EXPENSE, INCOME
+
+MAX_STEPS = 5
+MAX_ROWS = 50  # 一次最多交回这么多笔明细，免得撑爆上下文
+GAVE_UP = f"这个问题我没能在 {MAX_STEPS} 步内查完，换个问法试试。"
+PERSON = "个人收款"
+
+SYSTEM_PROMPT = """你是用户的记账助手，根据用户自己的账单回答问题。
+- 数字只能来自工具查到的结果，不要估算；金额写到分，比如 ¥85.50。
+- 要加总或比较时，优先用工具给出的合计。
+- 查不到就直说查不到，不要编。
+- 用户没说月份时，默认是 {default_month}。今天是 {today}。
+- 付给个人或个人转来的钱，交易对方都显示成“{person}”，不要猜是谁。
+- 用中文回答，简短，先说结论。"""
+
+
+class Step(NamedTuple):
+    tool: str
+    args: dict
+    result: dict
+
+
+class Answer(NamedTuple):
+    text: str
+    steps: list[Step]
+
+
+def yuan(cents: int) -> str:
+    return f"{Decimal(int(cents)) / 100:.2f}"
+
+
+def _month(conn: sqlite3.Connection, month) -> None:
+    if not isinstance(month, str) or not re.fullmatch(r"\d{4}-\d{2}", month):
+        raise ValueError(f"月份要写成 YYYY-MM，比如 2026-10；收到的是 {month!r}")
+    have = months(conn)
+    if month not in have:
+        raise ValueError(f"没有 {month} 的账单；有账单的月份：{'、'.join(have) or '还没有'}")
+
+
+def _category(conn: sqlite3.Connection, category) -> None:
+    allowed = categories(conn) + [UNCATEGORIZED]
+    if category not in allowed:
+        raise ValueError(f"没有这个分类：{category}；现有分类：{'、'.join(allowed)}")
+
+
+def _row(people: set[str], tx_time: str, who: str, item: str, cents: int) -> dict:
+    person = who in people
+    return {"time": tx_time[:16], "counterparty": PERSON if person else who,
+            "item": "" if person or item == "/" else item, "amount": yuan(cents)}
+
+
+def list_months(conn: sqlite3.Connection) -> dict:
+    rows = []
+    for month in months(conn):
+        expense, income = month_totals(conn, month)
+        rows.append({"month": month, "expense": yuan(expense), "income": yuan(income)})
+    return {"months": rows}
+
+
+def month_summary(conn: sqlite3.Connection, month: str) -> dict:
+    _month(conn, month)
+    expense, income = month_totals(conn, month)
+    return {"month": month, "expense": yuan(expense), "income": yuan(income),
+            "by_category": [{"category": c, "amount": yuan(cents)} for c, cents in month_by_category(conn, month)]}
+
+
+def category_detail(conn: sqlite3.Connection, month: str, category: str) -> dict:
+    _month(conn, month)
+    _category(conn, category)
+    people = person_counterparties(conn)
+    rows = category_transactions(conn, month, category)
+    return {"month": month, "category": category, "count": len(rows), "total": yuan(sum(r[3] for r in rows)),
+            "rows": [_row(people, *r) for r in rows[:MAX_ROWS]]}
+
+
+def daily_spending(conn: sqlite3.Connection, month: str) -> dict:
+    _month(conn, month)
+    return {"month": month, "days": [{"date": day, "amount": yuan(cents)} for day, cents in daily_expense(conn, month)]}
+
+
+def top_counterparties(conn: sqlite3.Connection, month: str, limit: int = 5) -> dict:
+    _month(conn, month)
+    limit = min(int(limit), MAX_ROWS)
+    people = person_counterparties(conn)
+    merged: dict[str, list[int]] = {}  # 付给个人的合成一项，免得出现好几个“个人收款”
+    for who, count, cents in month_by_counterparty(conn, month):
+        entry = merged.setdefault(PERSON if who in people else who, [0, 0])
+        entry[0] += count
+        entry[1] += cents
+    ranked = sorted(merged.items(), key=lambda kv: (-kv[1][1], kv[0]))[:limit]
+    return {"month": month, "rows": [{"counterparty": who, "count": n, "amount": yuan(c)} for who, (n, c) in ranked]}
+
+
+def search_transactions(conn: sqlite3.Connection, month: str | None = None, category: str | None = None,
+                        keyword: str | None = None, limit: int = 20) -> dict:
+    if month is not None:
+        _month(conn, month)
+    if category is not None:
+        _category(conn, category)
+    limit = min(int(limit), MAX_ROWS)
+    people = person_counterparties(conn)
+    found = find_transactions(conn, month, category, keyword or None)
+    totals = {EXPENSE: 0, INCOME: 0}
+    for f in found:
+        if f.result in totals:
+            totals[f.result] += f.counted_cents
+    rows = [{**_row(people, f.tx_time, f.counterparty, f.item, f.amount_cents), "direction": f.direction,
+             "counted_as": f.result, "why": f.reason, "category": f.category} for f in found[:limit]]
+    return {"count": len(found), "totals": {k: yuan(v) for k, v in totals.items()}, "rows": rows}
+
+
+TOOL_FUNCTIONS = {f.__name__: f for f in (list_months, month_summary, category_detail, daily_spending,
+                                          top_counterparties, search_transactions)}
+
+
+def _tool(name: str, description: str, properties: dict | None = None, required: tuple = ()) -> dict:
+    return {"type": "function", "function": {"name": name, "description": description, "parameters": {
+        "type": "object", "properties": properties or {}, "required": list(required)}}}
+
+
+MONTH = {"type": "string", "description": "月份，格式 YYYY-MM，比如 2026-10"}
+CATEGORY = {"type": "string", "description": "分类名，比如 吃饭；还没归类的叫 未归类"}
+TOOLS = [
+    _tool("list_months", "列出有账单的月份，以及每个月的消费合计和收入合计"),
+    _tool("month_summary", "某个月的消费合计、收入合计，以及每一类消费各花了多少", {"month": MONTH}, ("month",)),
+    _tool("category_detail", "某个月某一类消费的每一笔，以及这一类的合计",
+          {"month": MONTH, "category": CATEGORY}, ("month", "category")),
+    _tool("daily_spending", "某个月每一天的消费，没花钱的日子是 0", {"month": MONTH}, ("month",)),
+    _tool("top_counterparties", "某个月花钱最多的交易对方；付给个人的合成一项“个人收款”",
+          {"month": MONTH, "limit": {"type": "integer", "description": "要前几名，默认 5"}}, ("month",)),
+    _tool("search_transactions", "按月份、分类、关键词查交易明细，条件都可以不填，关键词匹配交易对方和商品。"
+          "返回符合条件的笔数、消费合计、收入合计，以及最近的若干笔",
+          {"month": MONTH, "category": CATEGORY, "keyword": {"type": "string", "description": "关键词，比如 球馆"},
+           "limit": {"type": "integer", "description": "最多返回几笔明细，默认 20"}}),
+]
+
+
+def run_tool(conn: sqlite3.Connection, name: str, args) -> dict:
+    """执行模型点名的工具，只读。名字或参数不对时把原因交回去，让模型自己改。"""
+    function = TOOL_FUNCTIONS.get(name)
+    if function is None:
+        return {"error": f"没有这个工具：{name}"}
+    try:
+        return function(conn, **args)
+    except (TypeError, ValueError) as e:
+        return {"error": f"参数不对：{e}"}
+
+
+def ask(client, model: str, conn: sqlite3.Connection, question: str, default_month: str) -> Answer:
+    """让模型一轮轮调工具，直到它给出回答；最多 MAX_STEPS 轮。"""
+    prompt = SYSTEM_PROMPT.format(default_month=default_month, today=date.today().isoformat(), person=PERSON)
+    messages = [{"role": "system", "content": prompt}, {"role": "user", "content": question}]
+    steps: list[Step] = []
+    for _ in range(MAX_STEPS):
+        try:
+            message = client.chat.completions.create(model=model, messages=messages, tools=TOOLS).choices[0].message
+        except Exception as e:  # 和分类建议一样：只报类型，不带出可能含 key 的原始消息
+            raise AIError(f"调用模型出错（{type(e).__name__}）") from e
+        if not message.tool_calls:
+            return Answer(message.content or "模型这次没给出回答，再问一次试试。", steps)
+        messages.append(message)  # 原样追加：DeepSeek 思考模式要求把 reasoning_content 一起交回去
+        for call in message.tool_calls:
+            try:
+                args = json.loads(call.function.arguments or "{}")
+            except json.JSONDecodeError:
+                args, result = {}, {"error": "参数不是合法的 JSON"}
+            else:
+                result = run_tool(conn, call.function.name, args)
+            steps.append(Step(call.function.name, args, result))
+            messages.append({"role": "tool", "tool_call_id": call.id,
+                             "content": json.dumps(result, ensure_ascii=False)})
+    return Answer(GAVE_UP, steps)

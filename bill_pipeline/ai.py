@@ -6,10 +6,9 @@ from pathlib import Path
 from openai import OpenAI
 
 from bill_pipeline.db import Card
+from bill_pipeline.rules import PERSON_TYPES
 
 ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
-# 交易对方最近一笔是这些类型的，多半是真人：分类建议不发，问答里名字换成“个人收款”
-PERSON_TYPES = {"扫二维码付款", "转账", "微信红包", "转账红包"}
 
 SUGGEST_PROMPT = """你帮用户给记账里的交易对方归类。
 只能从这些分类里选一个：{categories}。
@@ -63,7 +62,7 @@ def suggest_categories(client, model: str, cards: list[Card], categories: list[s
             model=model, temperature=0, response_format={"type": "json_object"},
             messages=[{"role": "system", "content": SUGGEST_PROMPT.format(categories="、".join(categories))},
                       {"role": "user", "content": json.dumps(items, ensure_ascii=False)}])
-        data = json.loads(response.choices[0].message.content)
+        data = json.loads(response.choices[0].message.content or "")
     except json.JSONDecodeError:
         raise AIError("模型返回的不是 JSON") from None
     except Exception as e:  # 网络、key、额度等接口错误都转成原因；只报类型，不带出可能含 key 的原始消息

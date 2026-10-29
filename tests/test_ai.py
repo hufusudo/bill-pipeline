@@ -56,9 +56,10 @@ def test_suggest_drops_invalid(conn):
     assert suggest_categories(llm, "fake", unmapped_counterparties(conn), DEFAULT_CATEGORIES) == {"食堂一楼": "吃饭"}
 
 
-def test_suggest_bad_json_raises(conn):
+@pytest.mark.parametrize("content", ["不是 JSON", None])  # DeepSeek 文档说 JSON 模式偶尔会返回空内容
+def test_suggest_bad_json_raises(conn, content):
     with pytest.raises(AIError, match="不是 JSON"):
-        suggest_categories(FakeLLM([{"content": "不是 JSON"}]), "fake", unmapped_counterparties(conn),
+        suggest_categories(FakeLLM([{"content": content}]), "fake", unmapped_counterparties(conn),
                            DEFAULT_CATEGORIES)
 
 
