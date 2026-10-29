@@ -63,6 +63,6 @@ else:
     if by_category:
         # 元只用于画图，表格里的金额仍按分换算显示
         chart = pd.DataFrame([(c, cents / 100) for c, cents in by_category], columns=["类别", "元"])
-        st.bar_chart(chart.set_index("类别"))
+        st.bar_chart(chart.set_index("类别"), sort="-元")  # 从高到低，一眼看出哪类最多
         st.dataframe(pd.DataFrame([(c, yuan(cents)) for c, cents in by_category], columns=["类别", "金额（元）"]),
                      hide_index=True)
