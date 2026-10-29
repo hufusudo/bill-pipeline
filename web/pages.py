@@ -86,7 +86,7 @@ def render_overview(ctx: Context) -> None:
         ui.echart(donut_option(by_category), on_point_click=lambda e: open_category(ctx, e.name)).classes("chart")
         with ui.element("div").classes("legend"):
             for category, cents in by_category:
-                with ui.element("div").classes("legend-row") as row:
+                with ui.element("div").classes("legend-row").mark(f"legend-{category}") as row:
                     ui.element("span").classes("dot").style(f"background:{CATEGORY_COLORS.get(category, '#c3c9d3')}")
                     ui.label(category)
                     ui.label(money(cents)).classes("amt")
@@ -185,7 +185,7 @@ def render_upload(ctx: Context) -> None:
         history.refresh()
 
     upload = ui.upload(label="把微信 .xlsx 或支付宝 .csv 拖到这里", multiple=True, auto_upload=True,
-                       on_upload=handle).props("accept=.xlsx,.csv flat bordered color=teal") \
+                       on_upload=handle).props("accept=.xlsx,.csv flat") \
         .classes("drop mt-3").mark("upload")
     results = ui.column().classes("w-full gap-3 mt-3")
 

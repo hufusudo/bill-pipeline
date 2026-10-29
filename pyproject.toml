@@ -5,7 +5,3 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 main_file = "main.py"
-filterwarnings = [
-    # Streamlit 1.66 画图时内部用了 pandas 3.1 弃用的 reset_index(inplace=True)，不是本项目的代码
-    "ignore:The inplace keyword in DataFrame.reset_index is deprecated",
-]

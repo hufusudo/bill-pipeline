@@ -65,7 +65,7 @@ Spending is categorized by counterparty: the first import lists every uncategori
 
 ## Privacy
 
-- Runs only on this computer. Streamlit listens on localhost only, and its usage statistics are turned off (`.streamlit/config.toml`).
+- Runs only on this computer. The NiceGUI server listens on `127.0.0.1` only (NiceGUI's default would be `0.0.0.0`, reachable from the local network), and all front-end files (Vue, Quasar, ECharts, fonts) ship inside the package, so the page loads nothing from the internet.
 - Real bills and the database stay out of Git (`.gitignore`). Tests use generated fake bills.
 - This version calls no AI service and needs no network.
 
@@ -74,8 +74,10 @@ Spending is categorized by counterparty: the first import lists every uncategori
 ```bash
 python3.13 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-.venv/bin/streamlit run app.py
+.venv/bin/python main.py
 ```
+
+Then open http://127.0.0.1:8080. The page has five views, each answering one question: **Overview** (how much this month, and on what), **Trend** (daily and monthly spending), **Import** (is this bill trustworthy), **Categorize** (one counterparty at a time), **Reconcile** (where the difference between the platform total and real spending went).
 
 Run the tests:
 
@@ -101,8 +103,12 @@ bill_pipeline/
   validate.py   check 1, duplicate ids, check 2 (reconciliation)
   db.py         SQLite schema, all-or-nothing import, categories, monthly queries
   pipeline.py   read → check → clean → reconcile → store
-app.py          Streamlit page
-tests/          pytest suite with generated fake bills
+  report.py     month-level views: previous month, change, monthly reconciliation
+web/
+  theme.py      colors, CSS and ECharts options (pure functions)
+  pages.py      the NiceGUI page: navigation rail and five views
+main.py         entry point (binds 127.0.0.1)
+tests/          pytest suite with generated fake bills, plus NiceGUI simulated-user tests
 docs/           design document and implementation plan (Chinese)
 ```
 

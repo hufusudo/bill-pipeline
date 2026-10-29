@@ -103,3 +103,13 @@ async def test_recon_page_without_expense(user: User, db, tmp_path):
     await user.open("/")
     user.find(marker="nav-recon").click()
     await user.should_see("这个月没有支出记录。")
+
+
+async def test_overview_category_dialog(user: User, db, tmp_path):
+    conn = connect(db)
+    import_bill(conn, write_wechat_xlsx(tmp_path / "b.xlsx"), "b.xlsx")
+    set_category(conn, "食堂一楼", "吃饭")
+    await user.open("/")
+    user.find(marker="legend-吃饭").click()
+    await user.should_see("吃饭 · 10 月")
+    await user.should_see("10-01 12:00　食堂一楼")
