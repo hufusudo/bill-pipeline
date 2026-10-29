@@ -1,0 +1,14 @@
+# 真实账单和数据库只留在本机，不进 Git
+data/
+*.db
+*.sqlite3
+*.xlsx
+*.xls
+*.csv
+*.zip
+# 测试用的假账单放在 tests/fixtures/，显式放行
+!tests/fixtures/*
+
+.venv/
+__pycache__/
+.pytest_cache/
