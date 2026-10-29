@@ -5,7 +5,7 @@ from nicegui import ui
 from nicegui.elements.upload_files import SmallFileUpload
 from nicegui.testing import User
 
-from bill_pipeline.db import connect, month_by_category, set_category
+from bill_pipeline.db import connect, month_by_category, save_suggestions, set_category
 from bill_pipeline.pipeline import import_bill
 from tests.fakes import SAMPLE_ROWS, FakeLLM, write_wechat_xlsx
 
@@ -187,3 +187,15 @@ async def test_ask_without_config(user: User, db, tmp_path):
     await _ask(user, db, tmp_path, "这个月花了多少")
     user.find(marker="question").trigger("keydown.enter")  # 回车也能提问
     await user.should_see("AI 还没配置")
+
+
+async def test_recategorize_updates_ai_accuracy(user: User, db, tmp_path):
+    conn = connect(db)
+    import_bill(conn, write_wechat_xlsx(tmp_path / "b.xlsx"), "b.xlsx")
+    save_suggestions(conn, {"星光球馆": "运动"}, "fake")
+    set_category(conn, "星光球馆", "运动")  # 采用了 AI 的建议
+    await user.open("/")
+    user.find(marker="nav-sort").click()
+    await user.should_see("AI 建议准确率：1 / 1（100%）")
+    user.find(marker="recat-星光球馆").elements.pop().set_value("娱乐")  # 后来又改了主意
+    await user.should_see("AI 建议准确率：0 / 1（0%）")

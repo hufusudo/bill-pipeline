@@ -259,6 +259,10 @@ def render_sort(ctx: Context) -> None:
             done_list.refresh()
         card.refresh()
 
+    def recategorize(name: str, category: str) -> None:
+        set_category(ctx.conn, name, category)
+        card.refresh()  # AI 准确率显示在卡片区，改了类别要跟着更新
+
     def open_add_dialog() -> None:
         with ui.dialog() as dialog, ui.card().classes("min-w-[320px]"):
             ui.label("添加新分类").classes("text-lg font-bold")
@@ -323,7 +327,7 @@ def render_sort(ctx: Context) -> None:
                     ui.label(name)
                     ui.label(f"{count} 笔 · {money(cents)}").classes("note")
                     ui.select(categories(ctx.conn), value=category,
-                              on_change=lambda e, name=name: set_category(ctx.conn, name, e.value)) \
+                              on_change=lambda e, name=name: recategorize(name, e.value)) \
                         .props("dense outlined").mark(f"recat-{name}")
 
     asked = asked_counterparties(ctx.conn)
