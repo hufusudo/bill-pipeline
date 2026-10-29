@@ -6,11 +6,13 @@ from pathlib import Path
 
 from nicegui import ui
 
-from bill_pipeline.db import (category_transactions, connect, daily_expense, import_history, month_by_category,
-                              month_totals, months, recent_months)
+from bill_pipeline.db import (categorized, category_transactions, connect, daily_expense, import_history,
+                              month_by_category, month_totals, months, recent_months, set_category,
+                              unmapped_counterparties)
 from bill_pipeline.model import BillError
 from bill_pipeline.pipeline import ImportReport, import_bill
 from bill_pipeline.report import change_ratio, previous_month
+from bill_pipeline.rules import CATEGORIES
 from web.theme import (CATEGORY_COLORS, COUNT_UP_JS, CSS, daily_option, donut_option, money, monthly_option)
 
 DEFAULT_DB = Path(__file__).resolve().parents[1] / "data" / "bills.db"
@@ -197,12 +199,62 @@ def render_upload(ctx: Context) -> None:
     history()
 
 
+def render_sort(ctx: Context) -> None:
+    ui.label(TITLES["sort"]).classes("title")
+    skipped: set[str] = set()
+    total = len(unmapped_counterparties(ctx.conn))
+
+    def choose(name: str, category: str | None) -> None:
+        if category is None:
+            skipped.add(name)  # 跳过只在这一轮有效，不写库
+        else:
+            set_category(ctx.conn, name, category)
+            done_list.refresh()
+        card.refresh()
+
+    @ui.refreshable
+    def card() -> None:
+        pending = [c for c in unmapped_counterparties(ctx.conn) if c.counterparty not in skipped]
+        with ui.element("div").classes("cardzone"):
+            if not pending:
+                ui.label("剩下的都跳过了" if skipped else "都归好类了").classes("empty")
+                return
+            c = pending[0]
+            ui.label(f"第 {total - len(pending) + 1} / {total} 个 · 归一次，以后自动记住").classes("note")
+            with ui.element("div").classes("who"):
+                ui.label(c.counterparty).classes("who-name")
+                ui.label(f"{c.count} 笔 · {money(c.cents)}").classes("who-meta")
+                hint = f"支付宝分类：{c.tx_type}" if c.source == "支付宝" else c.tx_type
+                ui.label(f"{hint} · 最近一笔 {c.last_time[5:16]}").classes("who-meta")
+                with ui.element("div").classes("chips"):
+                    for category in CATEGORIES:
+                        ui.label(category).classes("chip").mark(f"chip-{category}") \
+                            .on("click", lambda category=category, name=c.counterparty: choose(name, category))
+            ui.label("跳过，以后再说 →").classes("skip").mark("skip") \
+                .on("click", lambda name=c.counterparty: choose(name, None))
+
+    @ui.refreshable
+    def done_list() -> None:
+        rows = categorized(ctx.conn)
+        with ui.expansion(f"已归类（{len(rows)}）").classes("recat"):
+            for name, category, count, cents in rows:
+                with ui.element("div").classes("recat-row"):
+                    ui.label(name)
+                    ui.label(f"{count} 笔 · {money(cents)}").classes("note")
+                    ui.select(CATEGORIES, value=category,
+                              on_change=lambda e, name=name: set_category(ctx.conn, name, e.value)) \
+                        .props("dense outlined").mark(f"recat-{name}")
+
+    card()
+    done_list()
+
+
 def placeholder(page: str):
     return lambda ctx: ui.label(TITLES[page]).classes("title")
 
 
 RENDERERS = {"overview": render_overview, "trend": render_trend, "upload": render_upload,
-             "sort": placeholder("sort"), "recon": placeholder("recon")}
+             "sort": render_sort, "recon": placeholder("recon")}
 
 
 def make_view(page: str, render, ctx: Context):
