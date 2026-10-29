@@ -192,7 +192,7 @@ body { background: #e9edf2; color: #111827;
 .legend-row:nth-child(2) { animation-delay: .07s } .legend-row:nth-child(3) { animation-delay: .14s }
 .legend-row:nth-child(4) { animation-delay: .21s } .legend-row:nth-child(5) { animation-delay: .28s }
 .legend-row:nth-child(6) { animation-delay: .35s } .legend-row:nth-child(7) { animation-delay: .42s }
-.dot { width: 10px; height: 10px; border-radius: 50%; }
+.dot { width: 10px; height: 10px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(17,24,39,.12); }
 .amt { font-variant-numeric: tabular-nums; font-weight: 600; }
 .pct { color: #6b7584; text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; }
 .empty { color: #6b7584; font-size: 15px; padding: 60px 0 10px; }

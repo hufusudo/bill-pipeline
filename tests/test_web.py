@@ -26,3 +26,14 @@ async def test_overview_with_data(user: User, db, tmp_path):
     await user.should_see("¥85.50")
     await user.should_see("71%")  # 列表里“未归类”的占比；“花得最多”画在图表内部，模拟测试看不到
     await user.should_see(kind=ui.echart)
+
+
+async def test_trend_page_modes(user: User, db, tmp_path):
+    import_bill(connect(db), write_wechat_xlsx(tmp_path / "b.xlsx"), "b.xlsx")
+    await user.open("/")
+    user.find(marker="nav-trend").click()
+    await user.should_see("花钱的节奏")
+    await user.should_see("10-02 花得最多：¥40.00")
+    user.find(marker="trend-mode").elements.pop().set_value("表格")
+    await user.should_see("比上月")
+    await user.should_see("¥85.50")

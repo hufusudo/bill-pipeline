@@ -5,9 +5,10 @@ from pathlib import Path
 
 from nicegui import ui
 
-from bill_pipeline.db import category_transactions, connect, month_by_category, month_totals, months
+from bill_pipeline.db import (category_transactions, connect, daily_expense, month_by_category, month_totals, months,
+                              recent_months)
 from bill_pipeline.report import change_ratio, previous_month
-from web.theme import CATEGORY_COLORS, COUNT_UP_JS, CSS, donut_option, money
+from web.theme import (CATEGORY_COLORS, COUNT_UP_JS, CSS, daily_option, donut_option, money, monthly_option)
 
 DEFAULT_DB = Path(__file__).resolve().parents[1] / "data" / "bills.db"
 PAGES = [("overview", "总览", "space_dashboard"), ("trend", "趋势", "trending_up"), ("upload", "导入", "upload"),
@@ -87,18 +88,66 @@ def render_overview(ctx: Context) -> None:
                 row.on("click", lambda category=category: open_category(ctx, category))
 
 
+def trend_table(ctx: Context) -> None:
+    with ui.element("div").classes("table"):
+        with ui.element("div").classes("tr"):
+            for head in ("月份", "消费", "比上月"):
+                ui.label(head)
+        previous = None
+        for month, cents in recent_months(ctx.conn):
+            ratio = None if previous is None else change_ratio(cents, previous)
+            with ui.element("div").classes("tr"):
+                ui.label(month_name(month))
+                ui.label(money(cents))
+                ui.label("—" if ratio is None else f"{'+' if ratio >= 0 else '−'}{abs(ratio) * 100:.1f}%")
+            previous = cents
+
+
+def render_trend(ctx: Context) -> None:
+    ui.label(TITLES["trend"]).classes("title")
+    if ctx.month is None:
+        ui.label("还没有导入账单").classes("empty")
+        return
+
+    @ui.refreshable
+    def body(mode: str) -> None:
+        if mode == "表格":
+            trend_table(ctx)
+        elif mode == "按天":
+            days = daily_expense(ctx.conn, ctx.month)
+            day, cents = max(days, key=lambda d: d[1], default=("", 0))
+            if cents == 0:
+                ui.label("这个月还没有消费").classes("note")
+                return
+            ui.label(f"{day[5:]} 花得最多：{money(cents)}").classes("note")
+            ui.echart(daily_option(days)).classes("chart")
+        else:
+            current, previous = month_totals(ctx.conn, ctx.month)[0], month_totals(ctx.conn, previous_month(ctx.month))[0]
+            if previous:
+                word = "少" if current < previous else "多"
+                ui.label(f"{month_name(ctx.month)}比 {month_name(previous_month(ctx.month))}{word}花 "
+                         f"{money(abs(current - previous))}").classes("note")
+            ui.echart(monthly_option(recent_months(ctx.conn), ctx.month)).classes("chart")
+
+    ui.toggle(["按天", "按月", "表格"], value="按天", on_change=lambda e: body.refresh(e.value)) \
+        .props("unelevated rounded no-caps toggle-color=teal").classes("my-3").mark("trend-mode")
+    body("按天")
+
+
 def placeholder(page: str):
     return lambda ctx: ui.label(TITLES[page]).classes("title")
 
 
-RENDERERS = {"overview": render_overview, "trend": placeholder("trend"), "upload": placeholder("upload"),
+RENDERERS = {"overview": render_overview, "trend": render_trend, "upload": placeholder("upload"),
              "sort": placeholder("sort"), "recon": placeholder("recon")}
 
 
-def make_view(render, ctx: Context):
+def make_view(page: str, render, ctx: Context):
+    # 只画当前这一页：切走时清空，切回来重画，动效也会重放
     @ui.refreshable
     def view() -> None:
-        render(ctx)
+        if ctx.page == page:
+            render(ctx)
 
     view()
     return view
@@ -116,11 +165,12 @@ def register() -> None:
         navs = {}
 
         def show(page: str) -> None:
-            ctx.page = page
+            old, ctx.page = ctx.page, page
             for key, nav in navs.items():
                 nav.classes(add="on") if key == page else nav.classes(remove="on")
             eyebrow.set_text(dict((key, label) for key, label, _ in PAGES)[page])
             panels.set_value(page)
+            ctx.views[old].refresh()
             ctx.views[page].refresh()
 
         def change_month(value: str) -> None:
@@ -148,4 +198,4 @@ def register() -> None:
                         .props("transition-prev=fade transition-next=fade").classes("panels") as panels:
                     for key, _, _ in PAGES:
                         with ui.tab_panel(key):
-                            ctx.views[key] = make_view(RENDERERS[key], ctx)
+                            ctx.views[key] = make_view(key, RENDERERS[key], ctx)
