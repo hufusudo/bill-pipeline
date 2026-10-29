@@ -16,8 +16,8 @@ def test_check_summary_passes(tmp_path):
 
 
 @pytest.mark.parametrize("override, message", [
-    ({"expense": "支出：5笔 105.11元"}, "支出"),
-    ({"income": "收入：4笔 1583.60元"}, "收入"),
+    ({"expense": "支出：5笔 112.31元"}, "支出"),
+    ({"income": "收入：4笔 1314.80元"}, "收入"),
     ({"count": "共10笔记录"}, "共"),
 ])
 def test_check_summary_mismatch(tmp_path, override, message):
@@ -39,14 +39,14 @@ def test_check_unique_ids(tmp_path):
 def test_reconcile_sample(tmp_path):
     bill = _bill(tmp_path)
     assert reconcile(apply_rules(bill.rows), bill.summary) == [
-        ReconLine("支出", "平台合计", 5, 10510),
-        ReconLine("支出", "减：全额退款的原交易", 1, 1960),
+        ReconLine("支出", "平台合计", 5, 11230),
+        ReconLine("支出", "减：全额退款的原交易", 1, 2680),
         ReconLine("支出", "= 计入", 4, 8550),
-        ReconLine("收入", "平台合计", 3, 158360),
-        ReconLine("收入", "减：退款", 1, 1960),
-        ReconLine("收入", "= 计入", 2, 156400),
-        ReconLine("中性交易", "平台合计", 1, 8008),
-        ReconLine("中性交易", "减：中性交易", 1, 8008),
+        ReconLine("收入", "平台合计", 3, 131480),
+        ReconLine("收入", "减：退款", 1, 2680),
+        ReconLine("收入", "= 计入", 2, 128800),
+        ReconLine("中性交易", "平台合计", 1, 5050),
+        ReconLine("中性交易", "减：中性交易", 1, 5050),
         ReconLine("中性交易", "= 计入", 0, 0),
     ]
 
@@ -64,4 +64,4 @@ def test_reconcile_lists_unknown_rows(tmp_path):
     bill = _bill(tmp_path, rows=rows)
     lines = reconcile(apply_rules(bill.rows), bill.summary)
     assert ReconLine("收入", "减：未识别（二手交易/已收钱）", 1, 3000) in lines
-    assert ReconLine("收入", "= 计入", 2, 156400) in lines
+    assert ReconLine("收入", "= 计入", 2, 128800) in lines

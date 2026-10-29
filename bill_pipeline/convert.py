@@ -17,7 +17,7 @@ def to_cents(value) -> int:
     if isinstance(value, int):
         number = Decimal(value)
     elif isinstance(value, float):
-        # 先转成字符串：Decimal(19.6) 会带出二进制误差，Decimal("19.6") 不会
+        # 先转成字符串：Decimal(0.1) 会带出二进制误差，Decimal("0.1") 不会
         number = Decimal(str(value))
     elif isinstance(value, str):
         try:

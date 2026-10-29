@@ -29,7 +29,7 @@ def test_import_bill_accepts_uploaded_bytes(conn, tmp_path):
 
 
 def test_rejected_bill_saves_nothing(conn, tmp_path):
-    path = write_wechat_xlsx(tmp_path / "b.xlsx", summary_override={"expense": "支出：5笔 105.11元"})
+    path = write_wechat_xlsx(tmp_path / "b.xlsx", summary_override={"expense": "支出：5笔 112.31元"})
     with pytest.raises(BillError):
         import_bill(conn, path, "b.xlsx")
     assert conn.execute("SELECT COUNT(*) FROM imports").fetchone()[0] == 0
@@ -43,21 +43,21 @@ def test_unsupported_file_type(conn):
 def test_import_alipay_csv(conn, tmp_path):
     report = import_bill(conn, write_alipay_csv(tmp_path / "a.csv"), "a.csv")
     assert (report.source, report.new, report.unknown) == ("支付宝", 4, 0)
-    assert ReconLine("中性交易", "减：中性交易", 1, 9270) in report.recon
+    assert ReconLine("中性交易", "减：中性交易", 1, 6660) in report.recon
     assert month_totals(conn, "2026-10") == (9550, 0)
 
 
 def test_wechat_and_alipay_in_one_db(conn, tmp_path):
     import_bill(conn, write_wechat_xlsx(tmp_path / "b.xlsx"), "b.xlsx")
     import_bill(conn, write_alipay_csv(tmp_path / "a.csv"), "a.csv")
-    assert month_totals(conn, "2026-10") == (8550 + 9550, 156400)
+    assert month_totals(conn, "2026-10") == (8550 + 9550, 128800)
 
 
 def test_unknown_rows_are_imported_but_flagged(conn, tmp_path):
     rows = SAMPLE_ROWS + [make_row(10, 10, 10, "二手交易", "闲鱼买家", "收入", 30.0, "已收钱")]
     report = import_bill(conn, write_wechat_xlsx(tmp_path / "b.xlsx", rows=rows), "b.xlsx")
     assert report.unknown == 1
-    assert month_totals(conn, "2026-10") == (8550, 156400)
+    assert month_totals(conn, "2026-10") == (8550, 128800)
 
 
 def test_empty_bill_imports_cleanly(conn, tmp_path):

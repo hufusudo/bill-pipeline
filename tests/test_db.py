@@ -58,7 +58,7 @@ def test_categories_and_month_report(conn, tmp_path):
     set_category(conn, "张阿姨", "吃饭")
     assert unmapped_counterparties(conn) == []
     assert months(conn) == ["2026-10"]
-    assert month_totals(conn, "2026-10") == (8550, 156400)
+    assert month_totals(conn, "2026-10") == (8550, 128800)
     assert month_by_category(conn, "2026-10") == [("运动", 4000), ("其他", 2500), ("吃饭", 2050)]
 
 

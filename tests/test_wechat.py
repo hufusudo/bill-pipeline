@@ -9,9 +9,9 @@ def test_read_wechat_summary_period_and_rows(tmp_path):
     bill = read_wechat(write_wechat_xlsx(tmp_path / "b.xlsx"))
     assert bill.source == "微信"
     assert (bill.period_start, bill.period_end) == ("2026-10-01 00:00:00", "2026-10-31 23:59:59")
-    assert bill.summary == Summary(count=9, income_count=3, income_cents=158360,
-                                   expense_count=5, expense_cents=10510,
-                                   neutral_count=1, neutral_cents=8008)
+    assert bill.summary == Summary(count=9, income_count=3, income_cents=131480,
+                                   expense_count=5, expense_cents=11230,
+                                   neutral_count=1, neutral_cents=5050)
     assert list(bill.rows.columns) == ROW_COLUMNS
     assert len(bill.rows) == 9
     first = bill.rows.iloc[0]

@@ -7,8 +7,8 @@ from bill_pipeline.model import BillError
 
 
 @pytest.mark.parametrize("value, cents", [
-    (19.6, 1960), (1631.04, 163104), (0.07, 7), (40, 4000),
-    ("1,620.60", 162060), (" 80.08 ", 8008),
+    (29.9, 2990), (1234.56, 123456), (0.07, 7), (40, 4000),
+    ("1,234.50", 123450), (" 66.60 ", 6660),
 ])
 def test_to_cents(value, cents):
     assert to_cents(value) == cents
@@ -35,6 +35,6 @@ def test_to_time_text_rejects(value):
 
 
 def test_yuan():
-    assert yuan(157444) == "1574.44"
+    assert yuan(123456) == "1234.56"
     assert yuan(5) == "0.05"
     assert yuan(0) == "0.00"

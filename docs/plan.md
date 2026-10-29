@@ -37,7 +37,7 @@
 
 1. **账单被 Excel 或 WPS 打开后另存过**，交易单号变成了数字：要拒收并说明原因，不能带着错的单号入库。→ 任务 3 `test_read_wechat_rejects_numeric_tx_id`
 2. **某个时间段里一笔交易都没有**（`共0笔记录`）：要能正常导入，报告显示 0 笔，不崩溃。→ 任务 3 `test_read_wechat_empty_bill`，任务 4 `test_apply_rules_empty`，任务 7 `test_empty_bill_imports_cleanly`
-3. **金额是 19.6、0.07 这类浮点数，或者说明行的金额带千分位**：要精确换算到分。→ 任务 2 `test_to_cents`
+3. **金额是 29.9、0.07 这类浮点数，或者说明行的金额带千分位**：要精确换算到分。→ 任务 2 `test_to_cents`
 4. **数据下面有空行，或交易对方名字前后有空格**：空行跳过；名字去掉首尾空格，否则归类对照表对不上。→ 任务 3 `test_read_wechat_strips_text_and_skips_blank_rows`
 5. **出现没见过的交易类型或状态**：照常导入，但标成未识别、不计入统计，对账照样平，页面要提醒。→ 任务 5 `test_reconcile_lists_unknown_rows`，任务 7 `test_unknown_rows_are_imported_but_flagged`
 
@@ -155,8 +155,8 @@ from bill_pipeline.model import BillError
 
 
 @pytest.mark.parametrize("value, cents", [
-    (19.6, 1960), (1631.04, 163104), (0.07, 7), (40, 4000),
-    ("1,620.60", 162060), (" 80.08 ", 8008),
+    (29.9, 2990), (1234.56, 123456), (0.07, 7), (40, 4000),
+    ("1,234.50", 123450), (" 66.60 ", 6660),
 ])
 def test_to_cents(value, cents):
     assert to_cents(value) == cents
@@ -183,7 +183,7 @@ def test_to_time_text_rejects(value):
 
 
 def test_yuan():
-    assert yuan(157444) == "1574.44"
+    assert yuan(123456) == "1234.56"
     assert yuan(5) == "0.05"
     assert yuan(0) == "0.00"
 ```
@@ -258,11 +258,11 @@ SAMPLE_ROWS = [
     make_row(2, 2, 19, "商户消费", "星光球馆", "支出", 40.0, "支付成功"),
     make_row(3, 3, 8, "扫二维码付款", "张阿姨", "支出", 8.0, "已转账"),
     make_row(4, 3, 21, "转账", "球友A", "支出", 25.0, "对方已收钱"),
-    make_row(5, 5, 10, "商户消费", "某电商", "支出", 19.6, "已全额退款"),
-    make_row(6, 6, 10, "淘宝平台-退款", "某电商", "收入", 19.6, "已全额退款"),
-    make_row(7, 7, 9, "转账", "爸爸", "收入", 1500.0, "已存入零钱"),
-    make_row(8, 8, 20, "微信红包", "亲戚", "收入", 64.0, "已存入零钱"),
-    make_row(9, 9, 15, "零钱提现", "某银行", "/", 80.08, "提现已到账", method="/"),
+    make_row(5, 5, 10, "商户消费", "某电商", "支出", 26.8, "已全额退款"),
+    make_row(6, 6, 10, "淘宝平台-退款", "某电商", "收入", 26.8, "已全额退款"),
+    make_row(7, 7, 9, "转账", "爸爸", "收入", 1200.0, "已存入零钱"),
+    make_row(8, 8, 20, "微信红包", "亲戚", "收入", 88.0, "已存入零钱"),
+    make_row(9, 9, 15, "零钱提现", "某银行", "/", 50.5, "提现已到账", method="/"),
 ]
 ```
 
@@ -307,9 +307,9 @@ def test_read_wechat_summary_period_and_rows(tmp_path):
     bill = read_wechat(write_wechat_xlsx(tmp_path / "b.xlsx"))
     assert bill.source == "微信"
     assert (bill.period_start, bill.period_end) == ("2026-10-01 00:00:00", "2026-10-31 23:59:59")
-    assert bill.summary == Summary(count=9, income_count=3, income_cents=158360,
-                                   expense_count=5, expense_cents=10510,
-                                   neutral_count=1, neutral_cents=8008)
+    assert bill.summary == Summary(count=9, income_count=3, income_cents=131480,
+                                   expense_count=5, expense_cents=11230,
+                                   neutral_count=1, neutral_cents=5050)
     assert list(bill.rows.columns) == ROW_COLUMNS
     assert len(bill.rows) == 9
     first = bill.rows.iloc[0]
@@ -445,17 +445,17 @@ from tests.fakes import write_wechat_xlsx
 
 
 @pytest.mark.parametrize("args, expected", [
-    (("/", "零钱提现", "提现已到账", 8008), ("不算", "中性交易", None, 0)),
+    (("/", "零钱提现", "提现已到账", 5050), ("不算", "中性交易", None, 0)),
     (("支出", "商户消费", "支付失败", 500), ("不算", "失败或关闭", None, 0)),
-    (("支出", "商户消费", "已全额退款", 1960), ("不算", "全额退款的原交易", None, 0)),
-    (("收入", "淘宝平台-退款", "已全额退款", 1960), ("不算", "退款", None, 0)),
+    (("支出", "商户消费", "已全额退款", 2680), ("不算", "全额退款的原交易", None, 0)),
+    (("收入", "淘宝平台-退款", "已全额退款", 2680), ("不算", "退款", None, 0)),
     (("支出", "商户消费", "已退款(￥5.00)", 2000), ("消费", "部分退款（待确认）", None, 1500)),
     (("支出", "商户消费", "已退款（¥20.00）", 2000), ("未识别", "未识别（商户消费/已退款（¥20.00））", None, 0)),
     (("支出", "商户消费", "支付成功", 1250), ("消费", "消费", None, 1250)),
     (("支出", "扫二维码付款", "已转账", 800), ("消费", "消费", None, 800)),
     (("支出", "转账", "对方已收钱", 2500), ("消费", "转账（归其他）", "其他", 2500)),
-    (("收入", "转账", "已存入零钱", 150000), ("收入", "转账收入", None, 150000)),
-    (("收入", "微信红包", "已存入零钱", 6400), ("收入", "收红包（待确认）", None, 6400)),
+    (("收入", "转账", "已存入零钱", 120000), ("收入", "转账收入", None, 120000)),
+    (("收入", "微信红包", "已存入零钱", 8800), ("收入", "收红包（待确认）", None, 8800)),
     (("支出", "微信红包", "已领取", 2000), ("消费", "发红包（归其他，待确认）", "其他", 2000)),
     (("支出", "转账", "已退还", 2500), ("未识别", "未识别（转账/已退还）", None, 0)),
     (("收入", "二手交易", "已收钱", 3000), ("未识别", "未识别（二手交易/已收钱）", None, 0)),
@@ -468,7 +468,7 @@ def test_apply_rules_adds_columns_and_keeps_input(tmp_path):
     rows = read_wechat(write_wechat_xlsx(tmp_path / "b.xlsx")).rows
     out = apply_rules(rows)
     assert list(out.columns) == ROW_COLUMNS + ["result", "reason", "category", "counted_cents"]
-    assert out.groupby("result").counted_cents.sum().to_dict() == {"不算": 0, "收入": 156400, "消费": 8550}
+    assert out.groupby("result").counted_cents.sum().to_dict() == {"不算": 0, "收入": 128800, "消费": 8550}
     assert out.loc[out.counterparty == "球友A", "category"].item() == "其他"
     assert list(rows.columns) == ROW_COLUMNS
 
@@ -551,8 +551,8 @@ def test_check_summary_passes(tmp_path):
 
 
 @pytest.mark.parametrize("override, message", [
-    ({"expense": "支出：5笔 105.11元"}, "支出"),
-    ({"income": "收入：4笔 1583.60元"}, "收入"),
+    ({"expense": "支出：5笔 112.31元"}, "支出"),
+    ({"income": "收入：4笔 1314.80元"}, "收入"),
     ({"count": "共10笔记录"}, "共"),
 ])
 def test_check_summary_mismatch(tmp_path, override, message):
@@ -574,14 +574,14 @@ def test_check_unique_ids(tmp_path):
 def test_reconcile_sample(tmp_path):
     bill = _bill(tmp_path)
     assert reconcile(apply_rules(bill.rows), bill.summary) == [
-        ReconLine("支出", "平台合计", 5, 10510),
-        ReconLine("支出", "减：全额退款的原交易", 1, 1960),
+        ReconLine("支出", "平台合计", 5, 11230),
+        ReconLine("支出", "减：全额退款的原交易", 1, 2680),
         ReconLine("支出", "= 计入", 4, 8550),
-        ReconLine("收入", "平台合计", 3, 158360),
-        ReconLine("收入", "减：退款", 1, 1960),
-        ReconLine("收入", "= 计入", 2, 156400),
-        ReconLine("中性交易", "平台合计", 1, 8008),
-        ReconLine("中性交易", "减：中性交易", 1, 8008),
+        ReconLine("收入", "平台合计", 3, 131480),
+        ReconLine("收入", "减：退款", 1, 2680),
+        ReconLine("收入", "= 计入", 2, 128800),
+        ReconLine("中性交易", "平台合计", 1, 5050),
+        ReconLine("中性交易", "减：中性交易", 1, 5050),
         ReconLine("中性交易", "= 计入", 0, 0),
     ]
 
@@ -599,7 +599,7 @@ def test_reconcile_lists_unknown_rows(tmp_path):
     bill = _bill(tmp_path, rows=rows)
     lines = reconcile(apply_rules(bill.rows), bill.summary)
     assert ReconLine("收入", "减：未识别（二手交易/已收钱）", 1, 3000) in lines
-    assert ReconLine("收入", "= 计入", 2, 156400) in lines
+    assert ReconLine("收入", "= 计入", 2, 128800) in lines
 ```
 
 - [ ] **第 2 步：运行，确认失败**
@@ -750,7 +750,7 @@ def test_categories_and_month_report(conn, tmp_path):
     set_category(conn, "张阿姨", "吃饭")
     assert unmapped_counterparties(conn) == []
     assert months(conn) == ["2026-10"]
-    assert month_totals(conn, "2026-10") == (8550, 156400)
+    assert month_totals(conn, "2026-10") == (8550, 128800)
     assert month_by_category(conn, "2026-10") == [("运动", 4000), ("其他", 2500), ("吃饭", 2050)]
 
 
@@ -827,7 +827,7 @@ def test_import_bill_accepts_uploaded_bytes(conn, tmp_path):
 
 
 def test_rejected_bill_saves_nothing(conn, tmp_path):
-    path = write_wechat_xlsx(tmp_path / "b.xlsx", summary_override={"expense": "支出：5笔 105.11元"})
+    path = write_wechat_xlsx(tmp_path / "b.xlsx", summary_override={"expense": "支出：5笔 112.31元"})
     with pytest.raises(BillError):
         import_bill(conn, path, "b.xlsx")
     assert conn.execute("SELECT COUNT(*) FROM imports").fetchone()[0] == 0
@@ -842,7 +842,7 @@ def test_unknown_rows_are_imported_but_flagged(conn, tmp_path):
     rows = SAMPLE_ROWS + [make_row(10, 10, 10, "二手交易", "闲鱼买家", "收入", 30.0, "已收钱")]
     report = import_bill(conn, write_wechat_xlsx(tmp_path / "b.xlsx", rows=rows), "b.xlsx")
     assert report.unknown == 1
-    assert month_totals(conn, "2026-10") == (8550, 156400)
+    assert month_totals(conn, "2026-10") == (8550, 128800)
 
 
 def test_empty_bill_imports_cleanly(conn, tmp_path):
@@ -1057,16 +1057,16 @@ git commit -m "docs: English README"
 - `make_alipay_row(n, day, hour, category, who, direction, amount, status="交易成功") -> dict`：交易订单号是 `2026100122001` 加 15 位序号，前后带制表符，和真实文件一样。
 - `ALIPAY_ROWS`：4 行。
   - 支出：餐饮美食 18.50、日用百货 32.00、文化休闲 45.00
-  - 不计收支：投资理财 92.70
+  - 不计收支：投资理财 66.60
 - `write_alipay_csv(path, rows=ALIPAY_ROWS, *, encoding="gb18030", summary_override=None, with_account_line=True) -> Path`：23 行说明照真实账单的版式；表头和每一行末尾都多一个逗号。
 
 **测试要覆盖：**
 - GBK 和 UTF-8 都能读，网页上传的二进制也能读。
-- 汇总是 `Summary(4, 0, 0, 3, 9550, 1, 9270)`，交易订单号去掉了空白，`不计收支` 变成 `/`。
+- 汇总是 `Summary(4, 0, 0, 3, 9550, 1, 6660)`，交易订单号去掉了空白，`不计收支` 变成 `/`。
 - 拒收：没有 `支付宝账户` 那一行、缺 `不计收支` 汇总、编码认不出、找不到表头。
 - 规则：（支出，交易成功）→ 消费；`/` → 中性交易；`交易关闭` → 失败或关闭；（收入，退款成功）和其他没见过的组合 → 未识别。
 - 流程：
-  - `.csv` 能整份导入，对账有 `减：中性交易 1 笔 9270`。
+  - `.csv` 能整份导入，对账有 `减：中性交易 1 笔 6660`。
   - 微信和支付宝导进同一个库后，10 月消费是 8550 + 9550 = 18100。
   - 原来测“不支持的文件类型”的用例，改用 `bill.pdf`。
 

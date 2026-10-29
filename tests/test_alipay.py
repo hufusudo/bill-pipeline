@@ -11,7 +11,7 @@ def test_read_alipay_gbk(tmp_path):
     bill = read_alipay(write_alipay_csv(tmp_path / "a.csv"))
     assert bill.source == "支付宝"
     assert (bill.period_start, bill.period_end) == ("2026-10-01 00:00:00", "2026-10-31 23:59:59")
-    assert bill.summary == Summary(4, 0, 0, 3, 9550, 1, 9270)
+    assert bill.summary == Summary(4, 0, 0, 3, 9550, 1, 6660)
     assert list(bill.rows.columns) == ROW_COLUMNS
     first = bill.rows.iloc[0]
     assert first.tx_id == "2026100122001000000000000001"
