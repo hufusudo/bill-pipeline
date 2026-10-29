@@ -6,7 +6,7 @@ from pathlib import Path
 
 from nicegui import ui
 
-from bill_pipeline.db import (categories, categorized, category_transactions, connect, daily_expense, import_history,
+from bill_pipeline.db import (add_category, categories, categorized, category_transactions, connect, daily_expense, import_history,
                               month_by_category, month_totals, months, recent_months, set_category,
                               unmapped_counterparties)
 from bill_pipeline.model import BillError
@@ -214,12 +214,39 @@ def render_sort(ctx: Context) -> None:
             done_list.refresh()
         card.refresh()
 
+    def open_add_dialog() -> None:
+        with ui.dialog() as dialog, ui.card().classes("min-w-[320px]"):
+            ui.label("添加新分类").classes("text-lg font-bold")
+            name = ui.input("分类名，最多 8 个字").props("autofocus outlined dense").classes("w-full") \
+                .mark("new-category-name")
+            error = ui.label().classes("text-sm text-red-8")
+
+            def submit() -> None:
+                try:
+                    add_category(ctx.conn, name.value or "")
+                except ValueError as e:
+                    error.set_text(str(e))
+                    return
+                dialog.close()
+                card.refresh()
+                done_list.refresh()
+
+            name.on("keydown.enter", submit)
+            with ui.row().classes("w-full justify-end"):
+                ui.button("取消", on_click=dialog.close).props("flat")
+                ui.button("添加", on_click=submit).props("unelevated color=teal").mark("new-category-ok")
+        dialog.open()
+
+    def add_button() -> None:
+        ui.label("+ 新分类").classes("chip add").mark("add-category").on("click", open_add_dialog)
+
     @ui.refreshable
     def card() -> None:
         pending = [c for c in unmapped_counterparties(ctx.conn) if c.counterparty not in skipped]
         with ui.element("div").classes("cardzone"):
             if not pending:
                 ui.label("剩下的都跳过了" if skipped else "都归好类了").classes("empty")
+                add_button()
                 return
             c = pending[0]
             ui.label(f"第 {total - len(pending) + 1} / {total} 个 · 归一次，以后自动记住").classes("note")
@@ -232,6 +259,7 @@ def render_sort(ctx: Context) -> None:
                     for category in categories(ctx.conn):
                         ui.label(category).classes("chip").mark(f"chip-{category}") \
                             .on("click", lambda category=category, name=c.counterparty: choose(name, category))
+                    add_button()
             ui.label("跳过，以后再说 →").classes("skip").mark("skip") \
                 .on("click", lambda name=c.counterparty: choose(name, None))
 

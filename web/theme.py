@@ -239,6 +239,8 @@ body { background: #e9edf2; color: #111827;
 .chip { padding: 8px 16px; border-radius: 999px; border: 1px solid #cfd6e0; font-size: 14px; cursor: pointer;
   transition: background .2s, color .2s, border-color .2s, transform .15s; user-select: none; }
 .chip:hover { background: #1baf7a; border-color: #1baf7a; color: #fff; transform: translateY(-1px); }
+.chip.add { border-style: dashed; color: #0f8a5f; }
+.chip.add:hover { color: #fff; }
 .skip { font-size: 13px; color: #6b7584; cursor: pointer; margin-top: 12px; }
 .recat { width: 100%; max-width: 560px; margin-top: 22px; }
 .recat-row { display: grid; grid-template-columns: 1fr auto 130px; gap: 12px; align-items: center; width: 100%;

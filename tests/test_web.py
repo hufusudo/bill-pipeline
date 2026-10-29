@@ -113,3 +113,26 @@ async def test_overview_category_dialog(user: User, db, tmp_path):
     user.find(marker="legend-吃饭").click()
     await user.should_see("吃饭 · 10 月")
     await user.should_see("10-01 12:00　食堂一楼")
+
+
+async def _open_add_dialog(user: User, db, tmp_path) -> None:
+    import_bill(connect(db), write_wechat_xlsx(tmp_path / "b.xlsx"), "b.xlsx")
+    await user.open("/")
+    user.find(marker="nav-sort").click()
+    await user.should_see(marker="add-category")
+    user.find(marker="add-category").click()
+    await user.should_see(marker="new-category-name")
+
+
+async def test_add_category_from_sort_page(user: User, db, tmp_path):
+    await _open_add_dialog(user, db, tmp_path)
+    user.find(marker="new-category-name").type("宠物")
+    user.find(marker="new-category-ok").click()
+    await user.should_see(marker="chip-宠物")
+
+
+async def test_add_duplicate_category_shows_error(user: User, db, tmp_path):
+    await _open_add_dialog(user, db, tmp_path)
+    user.find(marker="new-category-name").type("吃饭")
+    user.find(marker="new-category-ok").click()
+    await user.should_see("已经有这个分类了")
