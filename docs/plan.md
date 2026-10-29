@@ -12,7 +12,7 @@
 
 ## 范围
 
-- 本计划只做微信。支付宝的格式还没核实（设计文档 3.2）。等黄飞导出样本、看过结构后，另写一份短计划，接到 `pipeline.read_bill` 里，输出同样的 `ParsedBill`。
+- 任务 1–10 只做微信。支付宝的样本 10-29 拿到，看过结构后补写了任务 11（在本文末尾），接到 `pipeline.read_bill` 里，输出同样的 `ParsedBill`。
 - AI 功能、单笔改类、部署都不在本计划内（设计文档第 2 节、第 12 节）。
 
 ## 全局约束
@@ -1027,3 +1027,53 @@ EOF
 git add README.md
 git commit -m "docs: English README"
 ```
+
+---
+
+### 任务 11：支付宝账单（10-29 拿到样本后补写）
+
+格式见设计文档 3.2，规则见第 4 节后面的支付宝表。
+
+**文件：**
+- 新建：`bill_pipeline/header.py`、`bill_pipeline/alipay.py`、`tests/test_alipay.py`
+- 修改：`bill_pipeline/wechat.py`（汇总和起止时间的解析挪到 `header.py`）、`bill_pipeline/rules.py`、`bill_pipeline/pipeline.py`、`app.py`、`tests/fakes.py`、`tests/test_rules.py`、`tests/test_pipeline.py`
+
+**接口：**
+- `header.parse_summary(text: str, neutral_label: str) -> Summary`：微信传 `"中性交易"`，支付宝传 `"不计收支"`。
+- `header.parse_period(text: str) -> tuple[str, str]`
+- `alipay.read_alipay(src) -> ParsedBill`：`source` 是 `"支付宝"`。
+  - 先按 `utf-8-sig` 解码，失败再用 `gb18030`；两种都失败 → `编码认不出来…`。
+  - 说明行里必须有一行以 `支付宝账户` 开头，否则 → `不是支付宝账单…`。
+  - 字段去首尾空白；`不计收支` 记成 `/`；`对方账号` 不读。
+  - 出错时报的行号是文件里的行号。
+- `rules.classify(direction, tx_type, status, amount_cents, source="微信")`、`rules.apply_rules(rows, source="微信")`：
+  - 中性交易、失败或关闭两条规则两家共用。
+  - 支付宝只查 `ALIPAY_KNOWN = {("支出", "交易成功"): (EXPENSE, "消费", None)}`，查不到就是未识别。
+- `pipeline.read_bill`：`.csv` 交给 `read_alipay`；其他后缀 → `暂时只支持微信（.xlsx）和支付宝（.csv）账单：{file_name}`。
+- `pipeline.import_bill` 把 `bill.source` 传给 `apply_rules`。
+- `app.py` 的上传框接受 `xlsx` 和 `csv`。
+
+**假账单（`tests/fakes.py`）：**
+- `make_alipay_row(n, day, hour, category, who, direction, amount, status="交易成功") -> dict`：交易订单号是 `2026100122001` 加 15 位序号，前后带制表符，和真实文件一样。
+- `ALIPAY_ROWS`：4 行。
+  - 支出：餐饮美食 18.50、日用百货 32.00、文化休闲 45.00
+  - 不计收支：投资理财 92.70
+- `write_alipay_csv(path, rows=ALIPAY_ROWS, *, encoding="gb18030", summary_override=None, with_account_line=True) -> Path`：23 行说明照真实账单的版式；表头和每一行末尾都多一个逗号。
+
+**测试要覆盖：**
+- GBK 和 UTF-8 都能读，网页上传的二进制也能读。
+- 汇总是 `Summary(4, 0, 0, 3, 9550, 1, 9270)`，交易订单号去掉了空白，`不计收支` 变成 `/`。
+- 拒收：没有 `支付宝账户` 那一行、缺 `不计收支` 汇总、编码认不出、找不到表头。
+- 规则：（支出，交易成功）→ 消费；`/` → 中性交易；`交易关闭` → 失败或关闭；（收入，退款成功）和其他没见过的组合 → 未识别。
+- 流程：
+  - `.csv` 能整份导入，对账有 `减：中性交易 1 笔 9270`。
+  - 微信和支付宝导进同一个库后，10 月消费是 8550 + 9550 = 18100。
+  - 原来测“不支持的文件类型”的用例，改用 `bill.pdf`。
+
+**步骤：**
+
+1. 重构：把汇总和起止时间的解析挪到 `header.py`，跑微信那几项测试，必须照样全绿。提交。
+2. 假账单和 `test_alipay.py`：看着失败 → 实现 `alipay.py` → 通过。提交。
+3. 支付宝规则：测试先失败 → 实现 → 通过。提交。
+4. 流程和页面：测试先失败 → 实现 → 全量通过。提交。
+5. 用两份真实账单在临时库里各导一遍，只打印笔数和对账行。
