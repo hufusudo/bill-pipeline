@@ -1,9 +1,11 @@
 """造假的微信、支付宝账单：版式照真实账单，数据全是编的。"""
 import csv
 import io
+import json
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
 from openpyxl import Workbook
 
@@ -147,3 +149,30 @@ def write_alipay_csv(path, rows=ALIPAY_ROWS, *, encoding="gb18030", summary_over
         writer.writerow([row[name] for name in ALIPAY_HEADER])
     Path(path).write_bytes(out.getvalue().encode(encoding))
     return Path(path)
+
+
+class FakeLLM:
+    """假的模型客户端：按顺序返回预先写好的回复，并记下每次发出去的请求。
+
+    每条回复是 {"content": "..."} 或 {"tool_calls": [(工具名, 参数字典), ...]}。
+    """
+
+    def __init__(self, replies):
+        self.replies = list(replies)
+        self.calls = []
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+    def _create(self, **kwargs):
+        self.calls.append(kwargs)
+        if not self.replies:
+            raise RuntimeError("FakeLLM 的回复用完了")
+        reply = self.replies.pop(0)
+        tool_calls = [SimpleNamespace(id=f"call_{len(self.calls)}_{i}", type="function",
+                                      function=SimpleNamespace(name=name, arguments=json.dumps(args, ensure_ascii=False)))
+                      for i, (name, args) in enumerate(reply.get("tool_calls", []))] or None
+        message = SimpleNamespace(role="assistant", content=reply.get("content"), tool_calls=tool_calls)
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+    def sent_text(self) -> str:
+        """所有请求里发出去的内容拼成一段文字，方便检查有没有泄露个人名字。"""
+        return json.dumps(self.calls, ensure_ascii=False, default=str)

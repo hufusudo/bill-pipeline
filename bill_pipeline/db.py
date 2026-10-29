@@ -51,6 +51,13 @@ CREATE TABLE IF NOT EXISTS categories (
     name TEXT PRIMARY KEY,
     position INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS ai_suggestions (
+    counterparty TEXT PRIMARY KEY,
+    suggested TEXT NOT NULL,
+    model TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    chosen TEXT
+);
 """
 
 TX_COLUMNS = [
@@ -105,6 +112,7 @@ class Card(NamedTuple):
     source: str
     tx_type: str
     last_time: str
+    item: str
 
 
 def unmapped_counterparties(conn: sqlite3.Connection) -> list[Card]:
@@ -115,7 +123,9 @@ def unmapped_counterparties(conn: sqlite3.Connection) -> list[Card]:
                 AND x.result = :expense AND x.category IS NULL ORDER BY x.tx_time DESC LIMIT 1),
                (SELECT x.tx_type FROM transactions x WHERE x.counterparty = t.counterparty
                 AND x.result = :expense AND x.category IS NULL ORDER BY x.tx_time DESC LIMIT 1),
-               MAX(t.tx_time)
+               MAX(t.tx_time),
+               (SELECT x.item FROM transactions x WHERE x.counterparty = t.counterparty
+                AND x.result = :expense AND x.category IS NULL ORDER BY x.tx_time DESC LIMIT 1)
         FROM transactions t
         LEFT JOIN counterparty_categories m ON m.counterparty = t.counterparty
         WHERE t.result = :expense AND t.category IS NULL AND m.category IS NULL
@@ -144,6 +154,7 @@ def set_category(conn: sqlite3.Connection, counterparty: str, category: str) -> 
             "INSERT INTO counterparty_categories (counterparty, category) VALUES (?, ?) "
             "ON CONFLICT(counterparty) DO UPDATE SET category = excluded.category",
             (counterparty, category))
+        conn.execute("UPDATE ai_suggestions SET chosen = ? WHERE counterparty = ?", (category, counterparty))
 
 
 def months(conn: sqlite3.Connection) -> list[str]:
@@ -241,3 +252,26 @@ def add_category(conn: sqlite3.Connection, name: str) -> str:
         conn.execute("INSERT INTO categories (name, position) "
                      "VALUES (?, (SELECT COALESCE(MAX(position), 0) + 1 FROM categories))", (name,))
     return name
+
+
+def save_suggestions(conn: sqlite3.Connection, mapping: dict[str, str], model: str) -> None:
+    """存下 AI 的建议；同一个交易对方再建议一次就覆盖，并清掉旧的选择。"""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with conn:
+        conn.executemany(
+            "INSERT INTO ai_suggestions (counterparty, suggested, model, created_at) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(counterparty) DO UPDATE SET suggested = excluded.suggested, model = excluded.model, "
+            "created_at = excluded.created_at, chosen = NULL",
+            [(name, category, model, now) for name, category in mapping.items()])
+
+
+def suggestions(conn: sqlite3.Connection) -> dict[str, str]:
+    """还没被确认的 AI 建议：{交易对方: 建议的分类}。"""
+    return dict(conn.execute("SELECT counterparty, suggested FROM ai_suggestions WHERE chosen IS NULL"))
+
+
+def ai_accuracy(conn: sqlite3.Connection) -> tuple[int, int]:
+    """（AI 猜对的条数, 用户确认过的条数）。"""
+    hits, decided = conn.execute(
+        "SELECT COALESCE(SUM(chosen = suggested), 0), COUNT(chosen) FROM ai_suggestions").fetchone()
+    return hits, decided

@@ -15,3 +15,6 @@ __pycache__/
 
 # 视觉伴侣的页面草图
 .superpowers/
+
+# 大模型的 key，只留在本机
+.env
