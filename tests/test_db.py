@@ -6,9 +6,10 @@ import pytest
 from bill_pipeline.db import (add_category, categories, categorized, category_transactions, connect, daily_expense,
                               import_history,
                               mapped_counterparties, month_by_category, month_totals, months, recent_months,
-                              save_import,
+                              reclassify_unknown, save_import,
                               set_category, unmapped_counterparties)
-from bill_pipeline.rules import apply_rules
+from bill_pipeline.report import month_reconciliation
+from bill_pipeline.rules import EXPENSE, KNOWN, apply_rules
 from bill_pipeline.wechat import read_wechat
 from tests.fakes import SAMPLE_ROWS, make_row, write_wechat_xlsx
 
@@ -133,3 +134,15 @@ def test_add_category_and_use_it(conn, tmp_path):
     save_import(conn, bill, rows, "b.xlsx")
     set_category(conn, "星光球馆", "宠物")
     assert ("宠物", 4000) in month_by_category(conn, "2026-10")
+
+
+def test_reclassify_unknown_after_adding_a_rule(conn, tmp_path, monkeypatch):
+    rows = SAMPLE_ROWS + [make_row(10, 10, 12, "某新类型", "某商户", "支出", 30.0, "支付成功")]
+    bill, prepared = _prepared(tmp_path, rows=rows)
+    save_import(conn, bill, prepared, "b.xlsx")
+    assert month_totals(conn, "2026-10")[0] == 8550  # 没见过的那笔先不算
+    monkeypatch.setitem(KNOWN, ("支出", "某新类型", "支付成功"), (EXPENSE, "消费", None))  # 补上规则
+    assert reclassify_unknown(conn) == 1
+    assert month_totals(conn, "2026-10")[0] == 8550 + 3000
+    month_reconciliation(conn, "2026-10")  # 改完以后月度对账照样平，不平会抛错
+    assert reclassify_unknown(conn) == 0

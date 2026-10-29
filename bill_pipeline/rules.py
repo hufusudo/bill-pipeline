@@ -11,17 +11,20 @@ DEFAULT_CATEGORIES = ["吃饭", "运动", "购物", "交通", "娱乐", "其他"
 EXPENSE, INCOME, EXCLUDED, UNKNOWN = "消费", "收入", "不算", "未识别"
 OTHER = "其他"
 # 交易类型是这些的，交易对方多半是真人：分类建议不发给 AI，问答里名字换成“个人收款”
-PERSON_TYPES = {"扫二维码付款", "转账", "微信红包", "转账红包"}
+PERSON_TYPES = {"扫二维码付款", "转账", "微信红包", "转账红包", "二维码收款"}
 
 FAILED_STATUSES = {"交易关闭", "支付失败"}
 PARTIAL_REFUND = re.compile(r"^已退款[（(][￥¥]?(\d+(?:\.\d{1,2})?)[)）]$")
-# （收/支, 交易类型, 状态）→（结果, 原因, 固定类别）。表里没有的组合不猜，标成未识别
+# （收/支, 交易类型, 状态）→（结果, 原因, 固定类别）。表里没有的组合不猜，标成未识别；结果是“不算”的计入 0
 KNOWN = {
     ("支出", "商户消费", "支付成功"): (EXPENSE, "消费", None),
+    ("支出", "消费-其他", "支付成功"): (EXPENSE, "消费", None),
     ("支出", "扫二维码付款", "已转账"): (EXPENSE, "消费", None),
     ("支出", "转账", "对方已收钱"): (EXPENSE, "转账（归其他）", OTHER),
+    ("支出", "转账", "对方已退还"): (EXCLUDED, "转账被对方退还", None),
     ("收入", "转账", "已存入零钱"): (INCOME, "转账收入", None),
     ("收入", "微信红包", "已存入零钱"): (INCOME, "收红包", None),
+    ("收入", "二维码收款", "已收钱"): (INCOME, "收款码收入", None),
 }
 # 支付宝的“交易分类”是它自己的消费分类，不分转账和消费，所以只看（收/支, 状态）
 ALIPAY_KNOWN = {
@@ -58,7 +61,7 @@ def classify(direction: str, tx_type: str, status: str, amount_cents: int, sourc
             return Classified(EXPENSE, "部分退款（待确认）", None, amount_cents - refunded)
     if (direction, tx_type, status) in KNOWN:
         result, reason, category = KNOWN[(direction, tx_type, status)]
-        return Classified(result, reason, category, amount_cents)
+        return Classified(result, reason, category, 0 if result == EXCLUDED else amount_cents)
     if direction == "支出" and tx_type == "微信红包":
         return Classified(EXPENSE, "发红包（归其他）", OTHER, amount_cents)
     return Classified(UNKNOWN, f"未识别（{tx_type}/{status}）", None, 0)

@@ -7,7 +7,8 @@ from nicegui.testing import User
 
 from bill_pipeline.db import connect, month_by_category, save_suggestions, set_category
 from bill_pipeline.pipeline import import_bill
-from tests.fakes import SAMPLE_ROWS, FakeLLM, write_wechat_xlsx
+from bill_pipeline.rules import EXPENSE, KNOWN
+from tests.fakes import SAMPLE_ROWS, FakeLLM, make_row, write_wechat_xlsx
 
 
 @pytest.fixture
@@ -199,3 +200,11 @@ async def test_recategorize_updates_ai_accuracy(user: User, db, tmp_path):
     await user.should_see("AI 建议准确率：1 / 1（100%）")
     user.find(marker="recat-星光球馆").elements.pop().set_value("娱乐")  # 后来又改了主意
     await user.should_see("AI 建议准确率：0 / 1（0%）")
+
+
+async def test_page_load_applies_new_rules(user: User, db, tmp_path, monkeypatch):
+    rows = SAMPLE_ROWS + [make_row(10, 10, 12, "某新类型", "某商户", "支出", 30.0, "支付成功")]
+    import_bill(connect(db), write_wechat_xlsx(tmp_path / "b.xlsx", rows=rows), "b.xlsx")
+    monkeypatch.setitem(KNOWN, ("支出", "某新类型", "支付成功"), (EXPENSE, "消费", None))  # 程序更新后补了规则
+    await user.open("/")
+    await user.should_see("¥115.50")  # 原来的 85.50 加上这笔 30

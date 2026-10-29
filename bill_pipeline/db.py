@@ -7,7 +7,7 @@ from typing import NamedTuple
 import pandas as pd
 
 from bill_pipeline.model import ParsedBill
-from bill_pipeline.rules import DEFAULT_CATEGORIES, EXPENSE, INCOME, PERSON_TYPES
+from bill_pipeline.rules import DEFAULT_CATEGORIES, EXPENSE, INCOME, PERSON_TYPES, UNKNOWN, classify
 
 UNCATEGORIZED = "未归类"
 
@@ -102,6 +102,21 @@ def save_import(conn: sqlite3.Connection, bill: ParsedBill, rows: pd.DataFrame,
         conn.execute("UPDATE imports SET rows_new = ?, rows_skipped = ? WHERE id = ?",
                      (new, skipped, import_id))
     return new, skipped
+
+
+def reclassify_unknown(conn: sqlite3.Connection) -> int:
+    """用现在的规则重新判断库里“未识别”的交易，返回改了几笔。补了规则以后，旧数据靠它跟着更新。"""
+    changed = []
+    for source, tx_id, direction, tx_type, status, cents in conn.execute(
+            "SELECT source, tx_id, direction, tx_type, status, amount_cents FROM transactions WHERE result = ?",
+            (UNKNOWN,)).fetchall():
+        c = classify(direction, tx_type, status, cents, source=source)
+        if c.result != UNKNOWN:
+            changed.append((c.result, c.reason, c.category, c.counted_cents, source, tx_id))
+    with conn:
+        conn.executemany("UPDATE transactions SET result = ?, reason = ?, category = ?, counted_cents = ? "
+                         "WHERE source = ? AND tx_id = ?", changed)
+    return len(changed)
 
 
 class Card(NamedTuple):

@@ -45,14 +45,19 @@ Each row gets a result (`消费` spending / `收入` income / `不算` not count
 | The refund itself | `收入`, type ends with `-退款` or status `已全额退款` | Not income | Author |
 | Partial refund | Status like `已退款(￥x)` | Spending = amount − refunded | Pending confirmation |
 | WeChat merchant / QR-code payment | (`支出`, `商户消费`, `支付成功`), (`支出`, `扫二维码付款`, `已转账`) | Spending, categorized by counterparty | AI proposal |
+| Another WeChat payment type | (`支出`, `消费-其他`, `支付成功`) | Spending, categorized by counterparty | Author |
 | Money transferred out (split bills, paying friends back) | (`支出`, `转账`, `对方已收钱`) | Spending, category fixed to "Other" | Author |
+| Transfer returned by the recipient | (`支出`, `转账`, `对方已退还`) | Not counted (the money came back) | Author |
 | Red packet sent | (`支出`, `微信红包`) | Spending, "Other" | AI proposal |
 | Money transferred in (allowance) | (`收入`, `转账`, `已存入零钱`) | Income | Author |
 | Red packet received | (`收入`, `微信红包`, `已存入零钱`) | Income | AI proposal |
+| Money received through my QR code | (`收入`, `二维码收款`, `已收钱`) | Income | Author |
 | Alipay payment | (`支出`, `交易成功`) | Spending, categorized by counterparty | AI proposal |
 | Anything never seen before | None of the above | Not guessed: flagged as unknown, excluded, listed in the report | AI proposal |
 
 Spending is categorized by counterparty: the first import lists every uncategorized counterparty, and the user picks a category once. Later imports only ask about new ones.
+
+When a rule is added, stored rows that were unknown are re-classified the next time the page opens.
 
 ## Validation
 
@@ -76,7 +81,7 @@ Two optional features use an OpenAI-compatible chat API, such as DeepSeek. Witho
 - **Category suggestions.** When the Categorize view opens, uncategorized merchants are sent to the model in batches of 20, each with its name, Alipay's own category and the latest item description. The model must pick one of the user's existing categories; anything else is dropped. Each card shows the suggestion with a one-click accept, and the view tracks how many confirmed suggestions were right.
 - **Questions.** The Ask view answers questions such as "how much did I spend on sports in October" through function calling. The model can only call six read-only queries (months, month summary, category detail, daily spending, top counterparties, transaction search), must answer from their results, and gets at most five steps. Each answer lists the queries that ran.
 
-What leaves the computer: merchant names, amounts, dates, item descriptions, categories and the question. People are not sent: a counterparty with transfers, red packets or personal QR-code payments gets no suggestion and appears as "个人收款" in query results. Transaction ids, order ids, account numbers, payment methods and notes are never sent.
+What leaves the computer: merchant names, amounts, dates, item descriptions, categories and the question. People are not sent: a counterparty with transfers, red packets, or personal QR-code payments or receipts gets no suggestion and appears as "个人收款" in query results. Transaction ids, order ids, account numbers, payment methods and notes are never sent.
 
 Configure it in `.env` at the project root (ignored by Git):
 

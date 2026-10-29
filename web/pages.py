@@ -9,7 +9,8 @@ from nicegui import background_tasks, run, ui
 from bill_pipeline import ai, assistant
 from bill_pipeline.db import (Card, add_category, ai_accuracy, asked_counterparties, categories, categorized,
                               category_transactions, connect, daily_expense, import_history, month_by_category,
-                              month_totals, months, recent_months, save_suggestions, set_category, suggestions,
+                              month_totals, months, recent_months, reclassify_unknown, save_suggestions,
+                              set_category, suggestions,
                               unmapped_counterparties)
 from bill_pipeline.model import BillError
 from bill_pipeline.pipeline import ImportReport, import_bill
@@ -455,6 +456,7 @@ def register() -> None:
         ui.add_css(CSS)
         ui.add_head_html(COUNT_UP_JS)
         conn = connect(db_path())
+        reclassify_unknown(conn)  # 程序更新、补了清洗规则以后，旧的“未识别”交易按新规则重新判断
         ui.context.client.on_disconnect(conn.close)
         ctx = Context(conn)
         navs = {}
