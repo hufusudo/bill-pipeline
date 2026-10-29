@@ -40,3 +40,14 @@ def test_apply_rules_empty():
     out = apply_rules(pd.DataFrame(columns=ROW_COLUMNS))
     assert out.empty
     assert "counted_cents" in out.columns
+
+
+@pytest.mark.parametrize("args, expected", [
+    (("支出", "餐饮美食", "交易成功", 1850), ("消费", "消费", None, 1850)),
+    (("/", "投资理财", "交易成功", 9270), ("不算", "中性交易", None, 0)),
+    (("支出", "日用百货", "交易关闭", 500), ("不算", "失败或关闭", None, 0)),
+    (("收入", "退款", "退款成功", 500), ("未识别", "未识别（退款/退款成功）", None, 0)),
+    (("支出", "转账红包", "等待确认收货", 500), ("未识别", "未识别（转账红包/等待确认收货）", None, 0)),
+])
+def test_classify_alipay(args, expected):
+    assert classify(*args, source="支付宝") == expected

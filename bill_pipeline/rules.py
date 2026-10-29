@@ -20,6 +20,10 @@ KNOWN = {
     ("收入", "转账", "已存入零钱"): (INCOME, "转账收入", None),
     ("收入", "微信红包", "已存入零钱"): (INCOME, "收红包（待确认）", None),
 }
+# 支付宝的“交易分类”是它自己的消费分类，不分转账和消费，所以只看（收/支, 状态）
+ALIPAY_KNOWN = {
+    ("支出", "交易成功"): (EXPENSE, "消费", None),
+}
 
 
 class Classified(NamedTuple):
@@ -29,13 +33,18 @@ class Classified(NamedTuple):
     counted_cents: int
 
 
-def classify(direction: str, tx_type: str, status: str, amount_cents: int) -> Classified:
-    """按顺序匹配，命中第一条就停。"""
+def classify(direction: str, tx_type: str, status: str, amount_cents: int, source: str = "微信") -> Classified:
+    """按顺序匹配，命中第一条就停。前两条两家共用。"""
     amount_cents = int(amount_cents)
     if direction == "/":
         return Classified(EXCLUDED, "中性交易", None, 0)
     if status in FAILED_STATUSES:
         return Classified(EXCLUDED, "失败或关闭", None, 0)
+    if source == "支付宝":
+        if (direction, status) in ALIPAY_KNOWN:
+            result, reason, category = ALIPAY_KNOWN[(direction, status)]
+            return Classified(result, reason, category, amount_cents)
+        return Classified(UNKNOWN, f"未识别（{tx_type}/{status}）", None, 0)
     if direction == "支出" and status == "已全额退款":
         return Classified(EXCLUDED, "全额退款的原交易", None, 0)
     if direction == "收入" and (tx_type.endswith("-退款") or status == "已全额退款"):
@@ -52,11 +61,12 @@ def classify(direction: str, tx_type: str, status: str, amount_cents: int) -> Cl
     return Classified(UNKNOWN, f"未识别（{tx_type}/{status}）", None, 0)
 
 
-def apply_rules(rows: pd.DataFrame) -> pd.DataFrame:
+def apply_rules(rows: pd.DataFrame, source: str = "微信") -> pd.DataFrame:
     """返回副本，多出 result、reason、category、counted_cents 四列。"""
     out = rows.copy()
     # 不用 DataFrame.apply：表为空时它拿不到列
-    results = [classify(*args) for args in zip(rows.direction, rows.tx_type, rows.status, rows.amount_cents)]
+    results = [classify(*args, source=source)
+               for args in zip(rows.direction, rows.tx_type, rows.status, rows.amount_cents)]
     for i, name in enumerate(Classified._fields):
         out[name] = [r[i] for r in results]
     return out
