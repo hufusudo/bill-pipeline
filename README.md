@@ -67,7 +67,32 @@ Spending is categorized by counterparty: the first import lists every uncategori
 
 - Runs only on this computer. The NiceGUI server listens on `127.0.0.1` only (NiceGUI's default would be `0.0.0.0`, reachable from the local network), and all front-end files (Vue, Quasar, ECharts, fonts) ship inside the package, so the page loads nothing from the internet.
 - Real bills and the database stay out of Git (`.gitignore`). Tests use generated fake bills.
-- This version calls no AI service and needs no network.
+- Importing, cleaning, checking and the reports never touch the network. Only the two optional AI features do; see [AI](#ai).
+
+## AI
+
+Two optional features use an OpenAI-compatible chat API, such as DeepSeek. Without a key everything else works, and the AI parts say what is missing.
+
+- **Category suggestions.** When the Categorize view opens, uncategorized merchants are sent to the model in batches of 20, each with its name, Alipay's own category and the latest item description. The model must pick one of the user's existing categories; anything else is dropped. Each card shows the suggestion with a one-click accept, and the view tracks how many confirmed suggestions were right.
+- **Questions.** The Ask view answers questions such as "how much did I spend on sports in October" through function calling. The model can only call six read-only queries (months, month summary, category detail, daily spending, top counterparties, transaction search), must answer from their results, and gets at most five steps. Each answer lists the queries that ran.
+
+What leaves the computer: merchant names, amounts, dates, item descriptions, categories and the question. People are not sent: a counterparty with transfers, red packets or personal QR-code payments gets no suggestion and appears as "个人收款" in query results. Transaction ids, order ids, account numbers, payment methods and notes are never sent.
+
+Configure it in `.env` at the project root (ignored by Git):
+
+```
+OPENAI_API_KEY=...
+OPENAI_BASE_URL=https://api.deepseek.com
+AGENT_MODEL=deepseek-flash
+```
+
+Evaluate the assistant on your own database. It calls the API, costs a little, and prints only the counts:
+
+```bash
+.venv/bin/python -m scripts.eval_ai
+```
+
+Tests never call the API: a fake client replays scripted replies, and `tests/conftest.py` hides any real key.
 
 ## How to run
 
@@ -77,7 +102,7 @@ python3.13 -m venv .venv
 .venv/bin/python main.py
 ```
 
-Then open http://127.0.0.1:8080. The page has five views, each answering one question: **Overview** (how much this month, and on what), **Trend** (daily and monthly spending), **Import** (is this bill trustworthy), **Categorize** (one counterparty at a time), **Reconcile** (where the difference between the platform total and real spending went).
+Then open http://127.0.0.1:8080. The page has six views, each answering one question: **Overview** (how much this month, and on what), **Trend** (daily and monthly spending), **Import** (is this bill trustworthy), **Categorize** (one counterparty at a time), **Reconcile** (where the difference between the platform total and real spending went), **Ask** (questions about your spending; needs the AI key).
 
 Run the tests:
 
@@ -104,10 +129,13 @@ bill_pipeline/
   db.py         SQLite schema, all-or-nothing import, categories, monthly queries
   pipeline.py   read → check → clean → reconcile → store
   report.py     month-level views: previous month, change, monthly reconciliation
+  ai.py         model client from .env, category suggestions
+  assistant.py  read-only query tools and the function-calling loop
 web/
   theme.py      colors, CSS and ECharts options (pure functions)
-  pages.py      the NiceGUI page: navigation rail and five views
+  pages.py      the NiceGUI page: navigation rail and six views
 main.py         entry point (binds 127.0.0.1)
+scripts/        eval_ai.py: accuracy of the assistant on the local database
 tests/          pytest suite with generated fake bills, plus NiceGUI simulated-user tests
 docs/           design document and implementation plan (Chinese)
 ```
@@ -118,6 +146,5 @@ Requirements, cleaning rules and validation design by Huang Fei. Code written wi
 
 ## Roadmap
 
-- AI-suggested categories for uncategorized counterparties, confirmed by the user.
-- Natural-language questions over the database through a separate agent project.
+- Renaming and deleting categories (this version can only add them).
 - Recategorizing single transactions, for example a split-bill transfer that should count as sports.
