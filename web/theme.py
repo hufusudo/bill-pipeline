@@ -246,6 +246,11 @@ body { background: #e9edf2; color: #111827;
   font-size: 13px; color: #6b7584; }
 .ai-pick { font-size: 14px; font-weight: 600; color: #0f8a5f; }
 .skip { font-size: 13px; color: #6b7584; cursor: pointer; margin-top: 12px; }
+.ask-row { display: flex; gap: 10px; align-items: center; width: 100%; max-width: 640px; margin-top: 16px; }
+.answer { max-width: 640px; margin-top: 18px; padding: 18px 20px; background: #f7f9fb; border: 1px solid #e6eaf0;
+  border-radius: 18px; animation: rise .4s ease both; }
+.answer-text { font-size: 15px; line-height: 1.7; margin-top: 6px; }
+.steps { margin-top: 8px; font-size: 13px; color: #6b7584; }
 .recat { width: 100%; max-width: 560px; margin-top: 22px; }
 .recat-row { display: grid; grid-template-columns: 1fr auto 130px; gap: 12px; align-items: center; width: 100%;
   font-size: 14px; padding: 4px 0; }

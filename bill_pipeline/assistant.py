@@ -122,6 +122,8 @@ def search_transactions(conn: sqlite3.Connection, month: str | None = None, cate
 
 TOOL_FUNCTIONS = {f.__name__: f for f in (list_months, month_summary, category_detail, daily_spending,
                                           top_counterparties, search_transactions)}
+TOOL_LABELS = {"list_months": "列出月份", "month_summary": "月度汇总", "category_detail": "分类明细",
+               "daily_spending": "每天的消费", "top_counterparties": "花钱最多的对象", "search_transactions": "查明细"}
 
 
 def _tool(name: str, description: str, properties: dict | None = None, required: tuple = ()) -> dict:
@@ -174,9 +176,11 @@ def ask(client, model: str, conn: sqlite3.Connection, question: str, default_mon
             try:
                 args = json.loads(call.function.arguments or "{}")
             except json.JSONDecodeError:
-                args, result = {}, {"error": "参数不是合法的 JSON"}
-            else:
+                args = None
+            if isinstance(args, dict):
                 result = run_tool(conn, call.function.name, args)
+            else:
+                args, result = {}, {"error": "参数要写成一个 JSON 对象"}
             steps.append(Step(call.function.name, args, result))
             messages.append({"role": "tool", "tool_call_id": call.id,
                              "content": json.dumps(result, ensure_ascii=False)})

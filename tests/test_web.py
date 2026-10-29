@@ -163,3 +163,27 @@ async def test_ai_suggest_error_shown(user: User, db, tmp_path):
     await user.should_see("AI 这次没给出建议：AI 还没配置")  # conftest 让测试看不到 key
     user.find(marker="chip-运动").click()  # 手动归类照常能用
     await user.should_see("第 2 / 3 个")
+
+
+async def _ask(user: User, db, tmp_path, question: str) -> None:
+    import_bill(connect(db), write_wechat_xlsx(tmp_path / "b.xlsx"), "b.xlsx")
+    await user.open("/")
+    user.find(marker="nav-ask").click()
+    await user.should_see(marker="question")
+    user.find(marker="question").type(question)
+
+
+async def test_ask_page_answers(user: User, db, tmp_path, monkeypatch):
+    llm = FakeLLM([{"tool_calls": [("month_summary", {"month": "2026-10"})]}, {"content": "10 月一共花了 ¥85.50。"}])
+    monkeypatch.setattr("bill_pipeline.ai.make_client", lambda: (llm, "fake"))
+    await _ask(user, db, tmp_path, "这个月花了多少")
+    user.find(marker="ask-btn").click()
+    await user.should_see("10 月一共花了 ¥85.50。")
+    await user.should_see("这次查了什么")
+    await user.should_see("月度汇总（2026-10）")
+
+
+async def test_ask_without_config(user: User, db, tmp_path):
+    await _ask(user, db, tmp_path, "这个月花了多少")
+    user.find(marker="question").trigger("keydown.enter")  # 回车也能提问
+    await user.should_see("AI 还没配置")

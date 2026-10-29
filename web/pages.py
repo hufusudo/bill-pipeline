@@ -6,7 +6,7 @@ from pathlib import Path
 
 from nicegui import background_tasks, run, ui
 
-from bill_pipeline import ai
+from bill_pipeline import ai, assistant
 from bill_pipeline.db import (Card, add_category, ai_accuracy, asked_counterparties, categories, categorized,
                               category_transactions, connect, daily_expense, import_history, month_by_category,
                               month_totals, months, recent_months, save_suggestions, set_category, suggestions,
@@ -19,8 +19,9 @@ from web.theme import (COUNT_UP_JS, CSS, EXTRA_COLOR, category_colors, daily_opt
 
 DEFAULT_DB = Path(__file__).resolve().parents[1] / "data" / "bills.db"
 PAGES = [("overview", "总览", "space_dashboard"), ("trend", "趋势", "trending_up"), ("upload", "导入", "upload"),
-         ("sort", "归类", "sell"), ("recon", "对账", "task_alt")]
-TITLES = {"trend": "花钱的节奏", "upload": "导入账单", "sort": "给交易对方归类", "recon": "钱都去哪了"}
+         ("sort", "归类", "sell"), ("recon", "对账", "task_alt"), ("ask", "问答", "forum")]
+TITLES = {"trend": "花钱的节奏", "upload": "导入账单", "sort": "给交易对方归类", "recon": "钱都去哪了",
+          "ask": "问问你的账单"}
 AI_BATCH = 20  # 一次问 20 个：回复短，不容易被截断，第一张卡片的建议也来得快
 
 
@@ -371,8 +372,65 @@ def render_recon(ctx: Context) -> None:
                     ui.label(money(line.cents))
 
 
+def ask_in_thread(client, model: str, question: str, month: str) -> assistant.Answer:
+    # sqlite 连接不能跨线程用：在后台线程里另开一个，用完就关
+    conn = connect(db_path())
+    try:
+        return assistant.ask(client, model, conn, question, month)
+    finally:
+        conn.close()
+
+
+def step_label(step: assistant.Step) -> str:
+    name = assistant.TOOL_LABELS.get(step.tool, step.tool)
+    args = "、".join(str(value) for value in step.args.values())
+    return f"{name}（{args}）" if args else name
+
+
+def render_ask(ctx: Context) -> None:
+    ui.label(TITLES["ask"]).classes("title")
+    if ctx.month is None:
+        ui.label("还没有导入账单").classes("empty")
+        return
+    ui.label("可以这样问：这个月花得最多的是哪一类？哪天花得最多？在球馆一共花了多少？").classes("note")
+
+    async def submit() -> None:
+        text = (question.value or "").strip()
+        if not text or not button.enabled:  # 正在问的时候按钮是禁用的，回车也不再提交
+            return
+        button.disable()
+        button.props("loading")
+        answer_zone.clear()
+        try:
+            client, model = ai.make_client()
+            answer = await run.io_bound(ask_in_thread, client, model, text, ctx.month)
+        except ai.AIError as e:
+            with answer_zone:
+                ui.label(f"AI 这次没答上来：{e}").classes("note")
+            return
+        finally:
+            button.enable()
+            button.props(remove="loading")
+        if answer is None:  # 程序正在关闭
+            return
+        with answer_zone, ui.element("div").classes("answer"):
+            ui.label(f"问：{text}").classes("note")
+            ui.markdown(answer.text).classes("answer-text")
+            if answer.steps:
+                with ui.expansion("这次查了什么").classes("steps"):
+                    for step in answer.steps:
+                        ui.label(step_label(step)).classes("note")
+
+    with ui.element("div").classes("ask-row"):
+        question = ui.input(placeholder="问一个关于你账单的问题").props("outlined dense").classes("grow") \
+            .mark("question")
+        button = ui.button("提问", on_click=submit).props("unelevated color=teal").mark("ask-btn")
+    question.on("keydown.enter", submit)
+    answer_zone = ui.element("div").classes("w-full")
+
+
 RENDERERS = {"overview": render_overview, "trend": render_trend, "upload": render_upload,
-             "sort": render_sort, "recon": render_recon}
+             "sort": render_sort, "recon": render_recon, "ask": render_ask}
 
 
 def make_view(page: str, render, ctx: Context):
