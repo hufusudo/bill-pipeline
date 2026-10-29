@@ -6,8 +6,6 @@ data/
 *.xls
 *.csv
 *.zip
-# 测试用的假账单放在 tests/fixtures/，显式放行
-!tests/fixtures/*
 
 .venv/
 __pycache__/

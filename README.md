@@ -138,7 +138,7 @@ web/
 main.py         entry point (binds 127.0.0.1)
 scripts/        eval_ai.py: accuracy of the assistant on the local database
 tests/          pytest suite with generated fake bills, plus NiceGUI simulated-user tests
-docs/           design document and implementation plan (Chinese)
+docs/           design document (Chinese)
 ```
 
 ## Known limitations
