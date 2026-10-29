@@ -12,3 +12,6 @@ data/
 .venv/
 __pycache__/
 .pytest_cache/
+
+# 视觉伴侣的页面草图
+.superpowers/
