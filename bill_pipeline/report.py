@@ -25,4 +25,15 @@ def month_reconciliation(conn: sqlite3.Connection, month: str) -> list[ReconLine
         return len(part), int(part.amount_cents.sum())
 
     (ec, ecents), (ic, icents), (nc, ncents) = stated("支出"), stated("收入"), stated("/")
-    return reconcile(rows, Summary(len(rows), ic, icents, ec, ecents, nc, ncents))
+    lines = reconcile(rows, Summary(len(rows), ic, icents, ec, ecents, nc, ncents))
+    from bill_pipeline.db import month_totals
+    expense,income=month_totals(conn,month)
+    out=[]
+    for line in lines:
+        if line.label=='= 计入' and line.direction in ('支出','收入'):
+            effective=expense if line.direction=='支出' else income
+            if effective!=line.cents:
+                out.append(ReconLine(line.direction,'减：个人口径调整',line.count,line.cents-effective))
+                line=ReconLine(line.direction,'= 计入',line.count,effective)
+        out.append(line)
+    return out

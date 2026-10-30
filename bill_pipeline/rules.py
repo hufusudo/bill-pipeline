@@ -7,7 +7,7 @@ import pandas as pd
 from bill_pipeline.convert import to_cents
 
 # 默认分类，顺序就是环形图扇区的顺序（相邻颜色验证过）；用户加的分类排在后面，存在数据库里
-RULESET_VERSION = "2026-10-30-review-1"
+RULESET_VERSION = "2026-10-30-review-2"
 
 DEFAULT_CATEGORIES = ["吃饭", "运动", "购物", "交通", "娱乐", "其他"]
 EXPENSE, INCOME, EXCLUDED, UNKNOWN = "消费", "收入", "不算", "未识别"
@@ -44,6 +44,8 @@ class Classified(NamedTuple):
 def classify(direction: str, tx_type: str, status: str, amount_cents: int, source: str = "微信") -> Classified:
     """按顺序匹配，命中第一条就停。前两条两家共用。"""
     amount_cents = int(amount_cents)
+    if direction == "支出" and ("部分退款" in status or PARTIAL_REFUND.match(status)):
+        return Classified(EXPENSE, "部分退款待核查（暂计原额）", None, amount_cents)
     if direction == "/":
         return Classified(EXCLUDED, "中性交易", None, 0)
     if status in FAILED_STATUSES:
@@ -57,10 +59,6 @@ def classify(direction: str, tx_type: str, status: str, amount_cents: int, sourc
         return Classified(EXCLUDED, "全额退款的原交易", None, 0)
     if direction == "收入" and (tx_type.endswith("-退款") or status == "已全额退款"):
         return Classified(EXCLUDED, "退款", None, 0)
-    if direction == "支出" and (match := PARTIAL_REFUND.match(status)):
-        refunded = to_cents(match.group(1))
-        if 0 < refunded < amount_cents:
-            return Classified(EXPENSE, "部分退款（待确认）", None, amount_cents - refunded)
     if (direction, tx_type, status) in KNOWN:
         result, reason, category = KNOWN[(direction, tx_type, status)]
         return Classified(result, reason, category, 0 if result == EXCLUDED else amount_cents)

@@ -85,6 +85,8 @@ def connect(path) -> sqlite3.Connection:
     with conn:
         conn.executemany("INSERT OR IGNORE INTO categories (name, position) VALUES (?, ?)",
                          [(name, i) for i, name in enumerate(DEFAULT_CATEGORIES, start=1)])
+    from bill_pipeline.observations import refresh_rules
+    refresh_rules(conn)
     return conn
 
 
@@ -108,6 +110,9 @@ def reclassify_unknown(conn: sqlite3.Connection) -> int:
     with conn:
         conn.executemany("UPDATE transactions SET result = ?, reason = ?, category = ?, counted_cents = ? "
                          "WHERE source = ? AND tx_id = ?", changed)
+        if changed:
+            from bill_pipeline.migrations import bump_revision
+            bump_revision(conn)
     return len(changed)
 
 

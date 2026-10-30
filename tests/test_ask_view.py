@@ -32,3 +32,10 @@ def test_stop_preserves_results_not_yet_polled_by_ui():
     state.publish('result', 1, 'list_months', {'step': Step('list_months', {}, {'months': []})})
     session.stop()
     assert len(session.turns[-1].answer.steps) == 1
+
+
+def test_unsaved_result_cannot_be_discarded_by_new_chat():
+    import pytest
+    session=AskSession()
+    session.pending_save=('m','r',Answer('尚未保存',[]))
+    with pytest.raises(ValueError):session.clear()

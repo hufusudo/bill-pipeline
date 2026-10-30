@@ -14,8 +14,9 @@ def writing(conn):
         raise ValueError('请先完成当前数据库操作')
     try:
         conn.execute('BEGIN IMMEDIATE')
+        before=conn.total_changes
         yield
-        bump_revision(conn)
+        if conn.total_changes!=before:bump_revision(conn)
         conn.commit()
     except BaseException:
         conn.rollback()
@@ -40,6 +41,7 @@ def confirm_refund(conn, expense_key, refund_key, cents, *, event_id=None):
     integer(cents)
     with writing(conn):
         expense=transaction(conn,expense_key)
+        if conn.execute("SELECT 1 FROM review_issues WHERE source=? AND tx_id=? AND kind='退款来源变更' AND resolved_at IS NULL",expense_key).fetchone():raise ValueError('原消费已变化，请先解除旧退款关联后重新核查')
         if expense['direction']!='支出' or expense['status'] in ('交易关闭','支付失败'):
             raise ValueError('请选择有效原消费')
         if refund_key==expense_key:raise ValueError('退款与消费不能是同一笔')
@@ -71,9 +73,13 @@ def confirm_refund(conn, expense_key, refund_key, cents, *, event_id=None):
 def revoke_refund(conn,event_id):
     with writing(conn):
         keys=conn.execute('SELECT source,tx_id FROM refund_evidence WHERE event_id=?',(event_id,)).fetchall()
+        original=conn.execute('SELECT expense_source,expense_id FROM refund_events WHERE id=?',(event_id,)).fetchone()
         conn.execute('UPDATE refund_events SET revoked_at=? WHERE id=?',(datetime.now().isoformat(),event_id))
         conn.execute('DELETE FROM refund_evidence WHERE event_id=?',(event_id,))
         for key in keys:issue(conn,key,'退款待核查',{'reason':'退款关联已解除'})
+        for key in keys+([original] if original else []):
+            if not conn.execute('SELECT 1 FROM refund_events f WHERE f.revoked_at IS NULL AND ((f.expense_source=? AND f.expense_id=?) OR EXISTS(SELECT 1 FROM refund_evidence e WHERE e.event_id=f.id AND e.source=? AND e.tx_id=?))',(*key,*key)).fetchone():
+                conn.execute("UPDATE review_issues SET resolved_at=? WHERE source=? AND tx_id=? AND kind='退款来源变更'",(datetime.now().isoformat(),*key))
 
 
 def set_transaction_categories(conn,tx_key,allocations):
@@ -88,11 +94,14 @@ def set_transaction_categories(conn,tx_key,allocations):
         if sum(v for _,v in allocations)!=tx['counted_cents']:raise ValueError('拆分合计必须等于个人消费净额')
         conn.execute('DELETE FROM category_overrides WHERE source=? AND tx_id=?',tx_key)
         conn.execute('INSERT INTO category_overrides VALUES(?,?,?)',(*tx_key,tx['counted_cents']))
+        conn.execute("UPDATE review_issues SET resolved_at=? WHERE source=? AND tx_id=? AND kind='分类来源变更'",(datetime.now().isoformat(),*tx_key))
         conn.executemany('INSERT INTO category_allocations VALUES(?,?,?,?)',[(*tx_key,c,n) for c,n in allocations])
 
 
 def clear_transaction_categories(conn,tx_key):
-    with writing(conn):conn.execute('DELETE FROM category_overrides WHERE source=? AND tx_id=?',tx_key)
+    with writing(conn):
+        conn.execute('DELETE FROM category_overrides WHERE source=? AND tx_id=?',tx_key)
+        conn.execute("UPDATE review_issues SET resolved_at=? WHERE source=? AND tx_id=? AND kind='分类来源变更'",(datetime.now().isoformat(),*tx_key))
 
 
 def set_counterparty_alias(conn,source,counterparty,canonical):
@@ -109,7 +118,7 @@ def create_advance(conn,expense_key,personal_cents):
         if tx['result']!='消费' or personal_cents>tx['net_cents']:raise ValueError('个人份额不能超过净消费')
         old=conn.execute('SELECT id,personal_cents FROM advance_groups WHERE source=? AND tx_id=? AND revoked_at IS NULL',expense_key).fetchone()
         if old:
-            if old[1]==personal_cents:return old[0]
+            if old[1]==personal_cents and conn.execute('SELECT 1 FROM valid_advances WHERE id=?',(old[0],)).fetchone():return old[0]
             raise ValueError('已有垫款组，请先解除')
         gid=uuid4().hex
         conn.execute('INSERT INTO advance_groups VALUES(?,?,?,?,?,NULL)',(gid,*expense_key,tx['net_cents'],personal_cents))
@@ -122,6 +131,10 @@ def allocate_repayment(conn,advance_id,income_key,cents):
         group=conn.execute('SELECT net_snapshot,personal_cents FROM valid_advances WHERE id=?',(advance_id,)).fetchone()
         income=transaction(conn,income_key)
         if not group or income['result']!='收入':raise ValueError('垫款组或收款口径需要核查')
+        prior=conn.execute('SELECT id,cents FROM repayment_allocations WHERE advance_id=? AND source=? AND tx_id=? AND revoked_at IS NULL',(advance_id,*income_key)).fetchone()
+        if prior:
+            if prior[1]==cents:return prior[0]
+            raise ValueError('这笔收款已经分配到该组，请先解除后重新分配')
         used=conn.execute('SELECT COALESCE(SUM(cents),0) FROM repayment_allocations WHERE advance_id=? AND revoked_at IS NULL',(advance_id,)).fetchone()[0]
         available=transaction(conn,income_key,'effective_transactions')['counted_cents']
         if cents>group[0]-group[1]-used or cents>available:raise ValueError('超过垫款或收款可分配金额')
@@ -135,7 +148,9 @@ def revoke_repayment(conn,allocation_id):
 
 
 def revoke_advance(conn,advance_id):
-    with writing(conn):conn.execute('UPDATE advance_groups SET revoked_at=? WHERE id=?',(datetime.now().isoformat(),advance_id))
+    with writing(conn):
+        conn.execute('UPDATE advance_groups SET revoked_at=? WHERE id=?',(datetime.now().isoformat(),advance_id))
+        conn.execute("UPDATE review_issues SET resolved_at=? WHERE (source,tx_id)=(SELECT source,tx_id FROM advance_groups WHERE id=?) AND kind='垫款来源变更'",(datetime.now().isoformat(),advance_id))
 
 
 def effective_transactions(conn,month=None):
@@ -165,3 +180,11 @@ def refund_candidates(conn,source,refund_id):
     if refund['merchant_order'] in ('','/'):return []
     return [t for t in effective_transactions(conn) if t['source']==source and t['direction']=='支出'
             and t['merchant_order']==refund['merchant_order'] and t['amount_cents']>=refund['amount_cents']]
+
+
+def resolve_refund_review(conn,key,decision):
+    if not decision.strip():raise ValueError('请说明核查结论')
+    with writing(conn):
+        for (iid,) in conn.execute("SELECT id FROM review_issues WHERE source=? AND tx_id=? AND kind='退款待核查' AND resolved_at IS NULL",key).fetchall():
+            conn.execute('INSERT INTO review_decisions(issue_id,decision,created_at) VALUES(?,?,?)',(iid,decision.strip(),datetime.now().isoformat()))
+            conn.execute('UPDATE review_issues SET resolved_at=? WHERE id=?',(datetime.now().isoformat(),iid))

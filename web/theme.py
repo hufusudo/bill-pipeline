@@ -315,3 +315,15 @@ CSS += """
   .ask-composer { padding: 10px 12px; }
 }
 """
+
+CSS += """
+.trust-banner { width:100%; margin:12px 0; padding:6px 10px; border:1px solid #e3ebe3; border-radius:10px; color:#547565; background:#f8faf5; font-size:12px; }
+.review-summary { width:100%; padding:15px; border-radius:12px; background:#eef6ef; color:#285846; }
+.review-dialog { width:min(540px,92vw); overflow-wrap:anywhere; }
+"""
+
+CSS += """
+.ask-conversations { width:100%; margin-top:18px; border:1px solid #e3ebe3; border-radius:12px; padding:3px 10px; color:#456a56; }
+.ask-conversations .q-btn { max-width:100%; overflow-wrap:anywhere; }
+.ask-stale { width:100%; font-size:12px; color:#946227; background:#fff7e9; border-radius:8px; padding:10px 14px; }
+"""

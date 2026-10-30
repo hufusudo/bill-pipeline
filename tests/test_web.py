@@ -97,7 +97,7 @@ async def test_recon_page(user: User, db, tmp_path):
     await user.open("/")
     user.find(marker="nav-recon").click()
     await user.should_see("这个月账单里的支出是 ¥112.30，其中全额退款的原交易 ¥26.80 不算消费，所以实际消费是 ¥85.50。")
-    await user.should_see("✓ 对账平了")
+    await user.should_see("✓ 文件金额核验通过")
 
 
 async def test_recon_page_without_expense(user: User, db, tmp_path):
@@ -263,6 +263,19 @@ async def test_ask_partial_answer_visible(user: User, db, tmp_path, monkeypatch)
     user.find(marker='ask-btn').click()
     await user.should_see('阶段性回答')
     await user.should_see('已经查到的结论')
+
+
+async def test_ask_restores_local_history_after_reload(user:User,db,tmp_path,monkeypatch):
+    llm=FakeLLM([{'content':'重开也能找到的回答'}])
+    monkeypatch.setattr('bill_pipeline.ai.make_client',lambda:(llm,'fake'))
+    await _ask(user,db,tmp_path,'请保存本次分析')
+    user.find(marker='ask-btn').click()
+    await user.should_see('重开也能找到的回答')
+    await user.open('/')
+    user.find(marker='nav-ask').click()
+    await user.should_see('重开也能找到的回答')
+    assert len(llm.calls)==1
+    await user.should_see('本机会话')
 
 
 async def test_ask_changed_month_is_explicit(user: User, db, tmp_path, monkeypatch):

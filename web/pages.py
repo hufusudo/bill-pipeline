@@ -16,12 +16,13 @@ from bill_pipeline.model import BillError
 from bill_pipeline.pipeline import ImportReport, import_bill
 from bill_pipeline.report import change_ratio, month_reconciliation, previous_month
 from web.ask import AskSession, render_ask
+from web.review import render_review, render_trust_banner
 from web.theme import (COUNT_UP_JS, CSS, EXTRA_COLOR, category_colors, daily_option, donut_option, money, monthly_option,
                        waterfall_option)
 
 DEFAULT_DB = Path(__file__).resolve().parents[1] / "data" / "bills.db"
 PAGES = [("overview", "总览", "space_dashboard"), ("trend", "趋势", "trending_up"), ("upload", "导入", "upload"),
-         ("sort", "归类", "sell"), ("recon", "对账", "task_alt"), ("ask", "问答", "forum")]
+         ("sort", "归类", "sell"), ("recon", "对账", "task_alt"), ("ask", "问答", "forum"), ("review", "核查", "fact_check")]
 TITLES = {"trend": "花钱的节奏", "upload": "导入账单", "sort": "给交易对方归类", "recon": "钱都去哪了",
           "ask": "问问你的账单"}
 AI_BATCH = 20  # 一次问 20 个：回复短，不容易被截断，第一张卡片的建议也来得快
@@ -52,6 +53,7 @@ class Context:
         self.show = lambda page: None
         # AI 建议在后台问：状态放这里，切走再切回归类页也能接着显示
         self.ask_session = AskSession()
+        self.ask_session.attach(conn)
         self.db_path = db_path()
         self.ai_busy = False
         self.ai_error: str | None = None
@@ -76,6 +78,7 @@ def render_overview(ctx: Context) -> None:
         ui.label("还没有导入账单").classes("empty")
         ui.button("去导入", on_click=lambda: ctx.show("upload")).props("unelevated rounded color=teal")
         return
+    render_trust_banner(ctx)
     expense, income = month_totals(ctx.conn, ctx.month)
     previous = previous_month(ctx.month)
     ratio = change_ratio(expense, month_totals(ctx.conn, previous)[0])
@@ -124,6 +127,7 @@ def trend_table(ctx: Context) -> None:
 
 def render_trend(ctx: Context) -> None:
     ui.label(TITLES["trend"]).classes("title")
+    render_trust_banner(ctx)
     if ctx.month is None:
         ui.label("还没有导入账单").classes("empty")
         return
@@ -158,7 +162,7 @@ def result_card(report: ImportReport) -> None:
         with ui.element("div").classes("result-head"):
             ui.label(f"{report.source}账单 {report.period_start[5:10]} ~ {report.period_end[5:10]}") \
                 .classes("font-semibold")
-            ui.label(f"新增 {report.new} 笔 · 跳过 {report.skipped} 笔").classes("note")
+            ui.label(f"新增 {report.new} 笔 · 跳过 {report.skipped} 笔 · 更新 {report.updated} 笔 · 冲突 {report.conflicts} 笔").classes("note")
         with ui.element("div").classes("bar"):
             ui.element("div")
         with ui.element("div").classes("checks"):
@@ -348,6 +352,7 @@ def render_sort(ctx: Context) -> None:
 
 def render_recon(ctx: Context) -> None:
     ui.label(TITLES["recon"]).classes("title")
+    render_trust_banner(ctx)
     if ctx.month is None:
         ui.label("还没有导入账单").classes("empty")
         return
@@ -364,7 +369,7 @@ def render_recon(ctx: Context) -> None:
     ui.label(text).classes("explain mt-2")
     # 能进库的数据都过了三关，这个月有数据就说明三关都过了
     with ui.element("div").classes("badges mt-3"):
-        for badge in ("✓ 读全了", "✓ 对账平了", "✓ 不重复"):
+        for badge in ("✓ 文件金额核验通过", "✓ 来源流水可追溯", "个人口径请结合待核查事项"):
             ui.label(badge).classes("badge")
     if platform.cents:
         ui.echart(waterfall_option(expense)).classes("chart")
@@ -382,7 +387,7 @@ def render_recon(ctx: Context) -> None:
 
 
 RENDERERS = {"overview": render_overview, "trend": render_trend, "upload": render_upload,
-             "sort": render_sort, "recon": render_recon, "ask": render_ask}
+             "sort": render_sort, "recon": render_recon, "ask": render_ask, "review": render_review}
 
 
 def make_view(page: str, render, ctx: Context):
@@ -404,9 +409,11 @@ def register() -> None:
         ui.add_head_html(COUNT_UP_JS)
         conn = connect(db_path())
         reclassify_unknown(conn)  # 程序更新、补了清洗规则以后，旧的“未识别”交易按新规则重新判断
-        ui.context.client.on_disconnect(conn.close)
         ctx = Context(conn)
         ui.context.client.on_disconnect(ctx.ask_session.stop)
+        ui.context.client.on_disconnect(conn.close)
+        from bill_pipeline import conversations as chats
+        ui.timer(5, lambda: (chats.heartbeat_instance(conn,chats.INSTANCE_ID), chats.interrupt_owned_messages(conn,chats.INSTANCE_ID)))
         navs = {}
 
         def show(page: str) -> None:

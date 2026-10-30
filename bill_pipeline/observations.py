@@ -8,6 +8,21 @@ from bill_pipeline.migrations import bump_revision
 from bill_pipeline.rules import classify
 
 
+def refresh_rules(conn):
+    from bill_pipeline.rules import RULESET_VERSION
+    old=conn.execute('SELECT ruleset_version FROM data_state WHERE id=1').fetchone()[0]
+    if old==RULESET_VERSION:return
+    with conn:
+        for row in conn.execute('SELECT source,tx_id,direction,tx_type,status,amount_cents FROM transactions').fetchall():
+            source,tid,direction,kind,status,cents=row
+            c=classify(direction,kind,status,cents,source=source)
+            conn.execute('UPDATE transactions SET result=?,reason=?,category=?,counted_cents=? WHERE source=? AND tx_id=?',(*c,source,tid))
+            if '退款' in status or '退款' in kind:
+                if not(direction=='支出' and status=='已全额退款'):issue(conn,(source,tid),'退款待核查')
+        conn.execute('UPDATE data_state SET ruleset_version=? WHERE id=1',(RULESET_VERSION,))
+        bump_revision(conn)
+
+
 @dataclass
 class ImportChanges:
     new: int = 0
@@ -18,7 +33,7 @@ class ImportChanges:
 
 def issue(conn, key, kind, detail=None):
     conn.execute('INSERT INTO review_issues(source,tx_id,kind,details_json) VALUES(?,?,?,?) '
-                 'ON CONFLICT(source,tx_id,kind) DO UPDATE SET details_json=excluded.details_json,resolved_at=NULL',
+                 'ON CONFLICT(source,tx_id,kind) DO UPDATE SET details_json=excluded.details_json,resolved_at=CASE WHEN review_issues.details_json=excluded.details_json THEN review_issues.resolved_at ELSE NULL END',
                  (*key, kind, json.dumps(detail or {}, ensure_ascii=False)))
 
 
@@ -44,6 +59,12 @@ def _select(conn, observation_id):
         raise ValueError('找不到这份交易观测')
     source, tx_id, payload = row
     data = json.loads(payload)
+    current=_dict_row(conn.execute('SELECT * FROM transactions WHERE source=? AND tx_id=?',(source,tx_id)))
+    if current and any(current[k]!=data[k] for k in ('tx_time','amount_cents','direction','counterparty')):
+        if conn.execute('SELECT 1 FROM category_overrides WHERE source=? AND tx_id=?',(source,tx_id)).fetchone():issue(conn,(source,tx_id),'分类来源变更')
+        if conn.execute('SELECT 1 FROM advance_groups WHERE source=? AND tx_id=? AND revoked_at IS NULL',(source,tx_id)).fetchone():issue(conn,(source,tx_id),'垫款来源变更')
+    if current and any(current[k]!=data[k] for k in ('tx_time','amount_cents','direction','counterparty')):
+        if conn.execute('SELECT 1 FROM refund_events f WHERE f.revoked_at IS NULL AND ((f.expense_source=? AND f.expense_id=?) OR EXISTS(SELECT 1 FROM refund_evidence e WHERE e.event_id=f.id AND e.source=? AND e.tx_id=?))',(source,tx_id,source,tx_id)).fetchone():issue(conn,(source,tx_id),'退款来源变更')
     c = classify(data['direction'],data['tx_type'],data['status'],data['amount_cents'],source=source)
     data.update(zip(c._fields,c))
     fields = [k for k in data if k not in ('source','tx_id')]
@@ -100,7 +121,7 @@ def observe_import(conn, bill, classified_rows, file_name):
                     changes.conflicts += 1
             suspect = ('退款' in data['status'] or '退款' in data['tx_type'] or '退款' in data['item'] or '退款' in data['note'])
             if suspect and not (data['direction']=='支出' and data['status']=='已全额退款'):
-                issue(conn,key,'退款待核查',{'reason':'核实退款与原消费的关系；未自动抵扣'})
+                issue(conn,key,'退款待核查',{'reason':'核实退款与原消费的关系；未自动抵扣','observation_id':oid})
         conn.execute('UPDATE imports SET rows_new=?,rows_skipped=?,rows_updated=?,rows_conflicts=? WHERE id=?',
                      (changes.new,changes.duplicate,changes.updated,changes.conflicts,import_id))
         if changes.new or changes.updated or changes.conflicts or coverage_changed:

@@ -1,5 +1,6 @@
 """账单研究室：页面内会话、只读查询进度和可核查的依据。"""
 import queue
+import time
 from dataclasses import dataclass, field
 from decimal import Decimal
 
@@ -8,6 +9,8 @@ from nicegui import run, ui
 from bill_pipeline import ai, assistant
 from bill_pipeline.assistant_state import Answer, RunState, Step, Turn
 from bill_pipeline.db import connect
+from bill_pipeline import conversations as chats
+from bill_pipeline.migrations import data_revision
 
 
 @dataclass
@@ -22,6 +25,56 @@ class AskSession:
     current_month: str = ''
     current_steps: list[Step] = field(default_factory=list)
     progress: str = ''
+    store: object = None
+    conversation_id: str | None = None
+    message_ids: list = field(default_factory=list)
+    saved_messages: dict = field(default_factory=dict)
+    active_message_id: str | None = None
+    save_error: str = ''
+    pending_save: tuple | None = None
+
+    def attach(self,conn):
+        self.store=conn
+        chats.register_instance(conn,chats.INSTANCE_ID)
+        chats.interrupt_owned_messages(conn,chats.INSTANCE_ID)
+        saved=chats.list_conversations(conn)
+        if saved:self.open(saved[0]['id'])
+
+    def open(self,cid):
+        self.stop()
+        if self.pending_save:raise ValueError('有结果尚未保存，请先重试保存')
+        messages=chats.load_turns(self.store,cid)
+        self.conversation_id=cid
+        self.turns=[chats.as_turn(m) for m in messages]
+        self.message_ids=[m['id'] for m in messages]
+        self.saved_messages={m['id']:m for m in messages}
+        self.selected_turn=len(self.turns)-1
+        self.save_error='';self.pending_save=None
+
+    def begin(self,state,text,month):
+        if self.store is None:return
+        if self.conversation_id is None:self.conversation_id=chats.create_conversation(self.store)
+        self.active_message_id=chats.begin_message(self.store,self.conversation_id,text,month,self.mode,state.run_id,chats.INSTANCE_ID)
+
+    def persist(self,state,answer):
+        if self.store is None:return
+        mid=self.active_message_id
+        self.message_ids.append(mid)
+        self.pending_save=(mid,state.run_id,answer)
+        self.retry_save()
+
+    def retry_save(self):
+        if not self.pending_save:return
+        try:
+            if not chats.finish_message(self.store,*self.pending_save):
+                self.save_error='会话已删除或运行状态已变化，本次结果未保存。';self.pending_save=None;return
+            self.saved_messages={m['id']:m for m in chats.load_turns(self.store,self.conversation_id)}
+            self.pending_save=None;self.save_error=''
+        except Exception as error:self.save_error=f'本机保存失败（{type(error).__name__}），当前回答仍在页面中，请重试保存。'
+
+    def history(self):
+        return [turn for i,turn in enumerate(self.turns)
+                if self.saved_messages.get(self.message_ids[i] if i<len(self.message_ids) else None,{}).get('status',turn.answer.status) in ('complete','partial','timeout')]
 
     def stop(self):
         if self.active_run is None:
@@ -38,12 +91,15 @@ class AskSession:
         self.turns.append(Turn(self.current_question, self.current_month,
                                Answer('查询已停止，已取得的依据保留在右侧。', list(self.current_steps),
                                       status='cancelled', reason='已停止')))
+        self.persist(self.active_run,self.turns[-1].answer)
         self.selected_turn = len(self.turns)-1
         self.active_run = None  # 迟到响应无法匹配新运行。
 
     def clear(self):
         self.stop()
+        if self.pending_save:raise ValueError('有结果尚未保存，请先重试保存')
         self.turns.clear()
+        self.conversation_id=None;self.message_ids.clear();self.saved_messages.clear()
         self.selected_turn = -1
         self.draft = ''
         self.default_month_notice = ''
@@ -74,6 +130,9 @@ def comparison_view(answer: Answer) -> dict | None:
 
 
 def render_result(result: dict):
+    for key in ('trust','base_trust'):
+        if result.get(key,{}).get('provisional'):
+            ui.label('数据范围不足或有待核查项；这些数字为暂计口径。').classes('ask-footnote')
     labels = {'expense': '消费', 'income': '收入', 'net': '结余', 'delta': '变化',
               'category': '分类', 'amount': '金额', 'time': '时间', 'counterparty': '交易对方',
               'item': '商品', 'count': '笔数', 'direction': '方向', 'counted_as': '计入口径',
@@ -92,7 +151,9 @@ def render_result(result: dict):
         ui.label(f'实际交易范围：{coverage["first_date"] or "无"} — {coverage["last_date"] or "无"}').classes('ask-footnote')
         if coverage['missing_months']:
             ui.label('范围内无交易记录的月份：'+'、'.join(coverage['missing_months'])).classes('ask-footnote')
-        ui.label(coverage['note']).classes('ask-footnote')
+        ui.label(coverage.get('note','历史覆盖摘要；有交易不代表当月数据完整')).classes('ask-footnote')
+    if result.get('history_snapshot'):
+        ui.label('历史聚合快照，未保存逐笔明细；金额需重新查询。').classes('ask-footnote')
     if result.get('note'):
         ui.label(result['note']).classes('ask-footnote')
     for key in ('months', 'by_category', 'groups', 'days', 'rows'):
@@ -120,20 +181,26 @@ def render_ask(ctx) -> None:
         redraw()
 
     def clear():
-        session.clear()
+        try:session.clear()
+        except ValueError as error:ui.notify(str(error),type='warning')
         redraw()
 
     async def submit():
         text = session.draft.strip()
         if not text or session.active_run is not None:
             return
+        if session.pending_save:
+            ui.notify('请先重试保存上一条回答',type='warning');return
         state = RunState()
+        try:session.begin(state,text,ctx.month)
+        except Exception as error:
+            session.save_error=f'本机保存失败（{type(error).__name__}），尚未发送给模型。';redraw();return
         session.active_run = state
         session.current_question, session.current_month = text, ctx.month
         session.current_steps = []
         session.progress = '正在准备查询…'
         session.draft = ''
-        history = [t for t in session.turns if t.answer.status in ('complete', 'partial', 'timeout')]
+        history = session.history()
         mode, month = session.mode, ctx.month
         redraw()
         try:
@@ -147,6 +214,7 @@ def render_ask(ctx) -> None:
         if session.active_run is not state or state.cancel.is_set() or result is None:
             return
         session.turns.append(Turn(text, month, result))
+        session.persist(state,result)
         session.selected_turn = len(session.turns)-1
         session.active_run = None
         redraw()
@@ -188,6 +256,47 @@ def render_ask(ctx) -> None:
                 ui.button('新对话', icon='add', on_click=clear).props('flat color=teal').mark('ask-new')
             if session.default_month_notice:
                 ui.label(session.default_month_notice).classes('ask-footnote')
+            if session.save_error:
+                ui.label(session.save_error).classes('text-orange-9 text-sm').mark('ask-save-error')
+                if session.pending_save:ui.button('重试保存',on_click=lambda:(session.retry_save(),redraw())).props('flat')
+            if session.store is not None:
+                with ui.expansion('本机会话',icon='history').classes('ask-conversations'):
+                    ui.label('仅保存在本机；提交新问题时，必要上下文仍会发送给配置的模型。').classes('ask-footnote')
+                    for conversation in chats.list_conversations(session.store):
+                        cid=conversation['id']
+                        def open_chat(cid=cid):
+                            try:session.open(cid);redraw()
+                            except Exception as error:ui.notify(f'打开失败（{type(error).__name__}）',type='negative')
+                        def rename_chat(cid=cid,title=conversation['title']):
+                            with ui.dialog() as dialog,ui.card().classes('w-80'):
+                                name=ui.input('会话标题',value=title).classes('w-full')
+                                def save():
+                                    try:chats.rename_conversation(session.store,cid,name.value);dialog.close();redraw()
+                                    except ValueError as error:ui.notify(str(error),type='warning')
+                                ui.button('保存标题',on_click=save)
+                            dialog.open()
+                        def delete_chat(cid=cid):
+                            try:
+                                if session.conversation_id==cid:session.clear()
+                                chats.set_deleted(session.store,cid,True);redraw()
+                            except Exception as error:ui.notify(f'删除失败（{type(error).__name__}）',type='warning')
+                        with ui.row().classes('w-full items-center no-wrap'):
+                            ui.button(conversation['title'],on_click=open_chat).props('flat no-caps').classes('grow text-left')
+                            ui.button(icon='edit',on_click=rename_chat).props('flat dense').tooltip('重命名')
+                            ui.button(icon='delete_outline',on_click=delete_chat).props('flat dense').tooltip('移到回收站')
+                    with ui.expansion('回收站').classes('w-full'):
+                        for conversation in chats.list_conversations(session.store,deleted=True):
+                            cid=conversation['id']
+                            ui.label(conversation['title']).classes('ask-footnote')
+                            ui.button('恢复',on_click=lambda cid=cid:(chats.set_deleted(session.store,cid,False),redraw())).props('flat dense')
+                            def purge(cid=cid,title=conversation['title']):
+                                with ui.dialog() as dialog,ui.card().classes('w-80'):
+                                    ui.label('永久删除会话：'+title)
+                                    ui.label('本次会删除问题、回答和依据；本机数据库备份可能仍保留旧内容。').classes('ask-footnote')
+                                    ui.button('取消',on_click=dialog.close).props('flat')
+                                    ui.button('确认永久删除',on_click=lambda:(chats.purge_conversation(session.store,cid),dialog.close(),redraw())).props('color=negative')
+                                dialog.open()
+                            ui.button('永久删除',on_click=purge).props('flat dense color=negative')
             with ui.element('div').classes('ask-workspace'):
                 with ui.column().classes('ask-main'):
                     if session.turns:
@@ -205,6 +314,14 @@ def render_ask(ctx) -> None:
                     elif session.turns:
                         turn = session.turns[session.selected_turn]
                         answer = turn.answer
+                        mid=session.message_ids[session.selected_turn] if session.message_ids else None
+                        saved=session.saved_messages.get(mid)
+                        if saved and chats.is_stale(saved,data_revision(session.store)):
+                            ui.label('账单已变化，旧答案需重新核查').classes('ask-stale').mark('ask-stale')
+                            async def reanalyze():
+                                session.draft=turn.question
+                                await submit()
+                            ui.button('重新分析此问题',on_click=reanalyze).props('flat color=teal')
                         ui.label(turn.question).classes('ask-question')
                         labels = {'complete': '分析完成', 'partial': '阶段性回答', 'cancelled': '已停止',
                                   'timeout': '时间预算已用尽', 'error': '暂未完成'}
@@ -258,7 +375,7 @@ def render_ask(ctx) -> None:
                                 ui.button('停止', icon='stop', on_click=stop).props('outline color=teal').mark('ask-stop')
                             else:
                                 ui.button('提问', icon='arrow_upward', on_click=submit).props('unelevated color=teal').mark('ask-btn')
-                    ui.label('数值来自账单查询 · 个人交易对方脱敏 · 对话仅保留在当前页面').classes('ask-footnote')
+                    ui.label('数值来自账单查询 · 个人交易对方脱敏 · 对话仅保存在本机').classes('ask-footnote')
                 with ui.column().classes('ask-evidence'):
                     ui.label('本次分析的依据').classes('ask-evidence-title')
                     cards = evidence_cards(answer) if answer else []

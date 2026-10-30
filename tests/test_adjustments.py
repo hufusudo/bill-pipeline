@@ -51,3 +51,51 @@ def test_refund_invalidates_advance_and_income_allocation(ledger):
     allocate_repayment(c,advance,key('爸爸'),3000)
     confirm_refund(c,key('星光球馆'),None,500)
     assert month_totals(c,'2026-10')==(8050,128800)
+
+
+def test_linked_refund_receipt_is_not_income_and_invalidates_repayment(ledger):
+    from bill_pipeline.adjustments import create_advance,allocate_repayment,confirm_refund
+    c,key=ledger
+    gid=create_advance(c,key('星光球馆'),1000)
+    allocate_repayment(c,gid,key('爸爸'),3000)
+    confirm_refund(c,key('食堂一楼'),key('爸爸'),1000)
+    assert month_totals(c,'2026-10')==(7550,127800)
+
+
+def test_review_resolution_survives_identical_reimport(ledger,tmp_path):
+    c,key=ledger
+    with c:c.execute("UPDATE review_issues SET resolved_at='confirmed'")
+    import_bill(c,write_wechat_xlsx(tmp_path/'again.xlsx'),'again.xlsx')
+    assert c.execute('SELECT count(*) FROM review_issues WHERE resolved_at IS NULL').fetchone()[0]==0
+
+
+def test_confirmed_identity_change_invalidates_manual_adjustments(ledger,tmp_path):
+    from bill_pipeline.adjustments import set_transaction_categories,create_advance
+    from bill_pipeline.observations import observe_import,select_observation
+    from bill_pipeline.pipeline import read_bill
+    from bill_pipeline.rules import apply_rules
+    c,key=ledger
+    create_advance(c,key('星光球馆'),1000)
+    set_transaction_categories(c,key('星光球馆'),[('运动',1000)])
+    bill=read_bill(write_wechat_xlsx(tmp_path/'new.xlsx'),'new.xlsx')
+    bill.rows.loc[bill.rows.counterparty=='星光球馆','counterparty']='另一家演示商户'
+    observe_import(c,bill,apply_rules(bill.rows),'new.xlsx')
+    oid=c.execute("SELECT id FROM transaction_observations WHERE payload_json LIKE '%另一家演示商户%'").fetchone()[0]
+    select_observation(c,oid)
+    assert month_totals(c,'2026-10')[0]==8550
+    assert ('运动',1000) not in month_by_category(c,'2026-10')
+
+
+def test_identity_change_requires_refund_recheck(ledger,tmp_path):
+    from bill_pipeline.adjustments import confirm_refund
+    from bill_pipeline.observations import observe_import,select_observation
+    from bill_pipeline.pipeline import read_bill
+    from bill_pipeline.rules import apply_rules
+    c,key=ledger
+    confirm_refund(c,key('星光球馆'),None,500)
+    bill=read_bill(write_wechat_xlsx(tmp_path/'changed.xlsx'),'changed.xlsx')
+    bill.rows.loc[bill.rows.counterparty=='星光球馆','counterparty']='新的演示商户'
+    observe_import(c,bill,apply_rules(bill.rows),'changed.xlsx')
+    oid=c.execute("SELECT id FROM transaction_observations WHERE payload_json LIKE '%新的演示商户%'").fetchone()[0]
+    select_observation(c,oid)
+    assert month_totals(c,'2026-10')[0]==8550

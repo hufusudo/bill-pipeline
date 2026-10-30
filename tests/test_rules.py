@@ -12,8 +12,8 @@ from tests.fakes import write_wechat_xlsx
     (("支出", "商户消费", "支付失败", 500), ("不算", "失败或关闭", None, 0)),
     (("支出", "商户消费", "已全额退款", 2680), ("不算", "全额退款的原交易", None, 0)),
     (("收入", "淘宝平台-退款", "已全额退款", 2680), ("不算", "退款", None, 0)),
-    (("支出", "商户消费", "已退款(￥5.00)", 2000), ("消费", "部分退款（待确认）", None, 1500)),
-    (("支出", "商户消费", "已退款（¥20.00）", 2000), ("未识别", "未识别（商户消费/已退款（¥20.00））", None, 0)),
+    (("支出", "商户消费", "已退款(￥5.00)", 2000), ("消费", "部分退款待核查（暂计原额）", None, 2000)),
+    (("支出", "商户消费", "已退款（¥20.00）", 2000), ("消费", "部分退款待核查（暂计原额）", None, 2000)),
     (("支出", "商户消费", "支付成功", 1250), ("消费", "消费", None, 1250)),
     (("支出", "扫二维码付款", "已转账", 800), ("消费", "消费", None, 800)),
     (("支出", "转账", "对方已收钱", 2500), ("消费", "转账（归其他）", "其他", 2500)),
@@ -43,6 +43,12 @@ def test_apply_rules_empty():
     out = apply_rules(pd.DataFrame(columns=ROW_COLUMNS))
     assert out.empty
     assert "counted_cents" in out.columns
+
+
+def test_unverified_partial_refund_does_not_guess_net_amount():
+    result=classify('支出','商户消费','已退款(￥5.00)',2000)
+    assert result.counted_cents==2000
+    assert '待核查' in result.reason
 
 
 @pytest.mark.parametrize("args, expected", [
