@@ -7,6 +7,8 @@ import pandas as pd
 from bill_pipeline.convert import to_cents
 
 # 默认分类，顺序就是环形图扇区的顺序（相邻颜色验证过）；用户加的分类排在后面，存在数据库里
+RULESET_VERSION = "2026-10-30-review-1"
+
 DEFAULT_CATEGORIES = ["吃饭", "运动", "购物", "交通", "娱乐", "其他"]
 EXPENSE, INCOME, EXCLUDED, UNKNOWN = "消费", "收入", "不算", "未识别"
 OTHER = "其他"

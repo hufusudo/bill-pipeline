@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 
 from bill_pipeline.convert import to_cents, to_time_text
-from bill_pipeline.header import parse_period, parse_summary
+from bill_pipeline.header import parse_period, parse_summary, parse_export_metadata
 from bill_pipeline.model import ROW_COLUMNS, BillError, ParsedBill
 
 # “对方账号”是个人信息，用不上，不读
@@ -59,7 +59,7 @@ def read_alipay(src) -> ParsedBill:
         if any(cell.strip() for cell in row):
             # reader.line_num 从表头那一行数起，加上表头之前的行数就是文件里的行号
             records.append(_parse_row(row, position, line_no=header_at + reader.line_num))
-    return ParsedBill("支付宝", period_start, period_end, summary, pd.DataFrame(records, columns=ROW_COLUMNS))
+    return ParsedBill("支付宝", period_start, period_end, summary, pd.DataFrame(records, columns=ROW_COLUMNS), *parse_export_metadata(text))
 
 
 def _parse_row(row: list[str], position: dict[str, int], line_no: int) -> dict:

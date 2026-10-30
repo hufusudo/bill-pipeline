@@ -74,9 +74,14 @@ INSERT_TX = (f"INSERT INTO transactions ({', '.join(TX_COLUMNS)}) "
 def connect(path) -> sqlite3.Connection:
     if str(path) != ":memory:":
         Path(path).parent.mkdir(parents=True, exist_ok=True)
+    existed = str(path) != ":memory:" and Path(path).exists() and Path(path).stat().st_size > 0
     conn = sqlite3.connect(path)
     conn.execute("PRAGMA foreign_keys = ON")
+    from bill_pipeline.migrations import migrate
+    if existed:
+        migrate(conn, Path(path)) if conn.execute("SELECT 1 FROM sqlite_master WHERE name='transactions'").fetchone() else None
     conn.executescript(SCHEMA)
+    migrate(conn, None)
     with conn:
         conn.executemany("INSERT OR IGNORE INTO categories (name, position) VALUES (?, ?)",
                          [(name, i) for i, name in enumerate(DEFAULT_CATEGORIES, start=1)])
@@ -86,22 +91,9 @@ def connect(path) -> sqlite3.Connection:
 def save_import(conn: sqlite3.Connection, bill: ParsedBill, rows: pd.DataFrame,
                 file_name: str) -> tuple[int, int]:
     """整份账单在一个事务里入库，中途出错就全部回滚。返回（新增笔数，跳过笔数）。"""
-    # pandas 3 的字符串列把空值记成 NaN，这里统一换成 None，入库才是 NULL
-    records = rows.astype(object).where(rows.notna(), None).to_dict("records")
-    with conn:
-        import_id = conn.execute(
-            "INSERT INTO imports (file_name, source, period_start, period_end, imported_at, rows_total) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (file_name, bill.source, bill.period_start, bill.period_end,
-             datetime.now().strftime("%Y-%m-%d %H:%M:%S"), len(records)),
-        ).lastrowid
-        for record in records:
-            record.update(source=bill.source, import_id=import_id)
-        new = conn.executemany(INSERT_TX, records).rowcount if records else 0
-        skipped = len(records) - new
-        conn.execute("UPDATE imports SET rows_new = ?, rows_skipped = ? WHERE id = ?",
-                     (new, skipped, import_id))
-    return new, skipped
+    from bill_pipeline.observations import observe_import
+    changes = observe_import(conn, bill, rows, file_name)
+    return changes.new, changes.duplicate
 
 
 def reclassify_unknown(conn: sqlite3.Connection) -> int:
@@ -134,17 +126,17 @@ def _cards(conn: sqlite3.Connection, mapped: bool) -> list[tuple]:
     """消费交易对方的卡片，最后多一列用户选的类别。mapped 为真时只要归过类的，否则只要没归过类的。"""
     return conn.execute(f"""
         SELECT t.counterparty, COUNT(*), SUM(t.counted_cents),
-               (SELECT x.source FROM transactions x WHERE x.counterparty = t.counterparty
-                AND x.result = :expense AND x.category IS NULL ORDER BY x.tx_time DESC LIMIT 1),
-               (SELECT x.tx_type FROM transactions x WHERE x.counterparty = t.counterparty
-                AND x.result = :expense AND x.category IS NULL ORDER BY x.tx_time DESC LIMIT 1),
+               (SELECT x.source FROM effective_transactions x WHERE x.counterparty = t.counterparty
+                AND x.result = :expense AND (SELECT category FROM transactions raw WHERE raw.source=x.source AND raw.tx_id=x.tx_id) IS NULL ORDER BY x.tx_time DESC LIMIT 1),
+               (SELECT x.tx_type FROM effective_transactions x WHERE x.counterparty = t.counterparty
+                AND x.result = :expense AND (SELECT category FROM transactions raw WHERE raw.source=x.source AND raw.tx_id=x.tx_id) IS NULL ORDER BY x.tx_time DESC LIMIT 1),
                MAX(t.tx_time),
-               (SELECT x.item FROM transactions x WHERE x.counterparty = t.counterparty
-                AND x.result = :expense AND x.category IS NULL ORDER BY x.tx_time DESC LIMIT 1),
+               (SELECT x.item FROM effective_transactions x WHERE x.counterparty = t.counterparty
+                AND x.result = :expense AND (SELECT category FROM transactions raw WHERE raw.source=x.source AND raw.tx_id=x.tx_id) IS NULL ORDER BY x.tx_time DESC LIMIT 1),
                m.category
-        FROM transactions t
+        FROM effective_transactions t
         LEFT JOIN counterparty_categories m ON m.counterparty = t.counterparty
-        WHERE t.result = :expense AND t.category IS NULL AND m.category IS {"NOT NULL" if mapped else "NULL"}
+        WHERE t.result = :expense AND (SELECT category FROM transactions raw WHERE raw.source=t.source AND raw.tx_id=t.tx_id) IS NULL AND m.category IS {"NOT NULL" if mapped else "NULL"}
         GROUP BY t.counterparty
         ORDER BY SUM(t.counted_cents) DESC, t.counterparty
     """, {"expense": EXPENSE}).fetchall()
@@ -165,7 +157,7 @@ def categorized(conn: sqlite3.Connection) -> list[tuple[str, str, int, int]]:
     return conn.execute("""
         SELECT m.counterparty, m.category, COUNT(t.tx_id), COALESCE(SUM(t.counted_cents), 0)
         FROM counterparty_categories m
-        LEFT JOIN transactions t ON t.counterparty = m.counterparty AND t.result = ? AND t.category IS NULL
+        LEFT JOIN effective_transactions t ON t.counterparty = m.counterparty AND t.result = ? AND (SELECT category FROM transactions raw WHERE raw.source=t.source AND raw.tx_id=t.tx_id) IS NULL
         GROUP BY m.counterparty, m.category
         ORDER BY 4 DESC, m.counterparty
     """, (EXPENSE,)).fetchall()
@@ -180,6 +172,8 @@ def set_category(conn: sqlite3.Connection, counterparty: str, category: str) -> 
             "ON CONFLICT(counterparty) DO UPDATE SET category = excluded.category",
             (counterparty, category))
         conn.execute("UPDATE ai_suggestions SET chosen = ? WHERE counterparty = ?", (category, counterparty))
+        from bill_pipeline.migrations import bump_revision
+        bump_revision(conn)
 
 
 class Found(NamedTuple):
@@ -200,12 +194,12 @@ def find_transactions(conn: sqlite3.Connection, month: str | None = None, catego
                       start_date: str | None = None, end_date: str | None = None) -> list[Found]:
     """按月份、分类、关键词（匹配交易对方和商品）查明细，是 None 的条件不限。晚的在前。"""
     rows = conn.execute("""
-        SELECT t.tx_time, t.counterparty, t.item, t.direction, t.amount_cents, t.counted_cents, t.result, t.reason,
+        SELECT t.tx_time, t.counterparty, t.item, t.direction, t.amount_cents, CASE WHEN :category IS NOT NULL THEN (SELECT a.counted_cents FROM effective_allocations a WHERE a.source=t.source AND a.tx_id=t.tx_id AND a.category=:category) ELSE t.counted_cents END, t.result, t.reason,
                CASE WHEN t.result = :expense THEN COALESCE(t.category, m.category, :uncat) END
-        FROM transactions t
+        FROM effective_transactions t
         LEFT JOIN counterparty_categories m ON m.counterparty = t.counterparty
         WHERE (:month IS NULL OR substr(t.tx_time, 1, 7) = :month)
-          AND (:category IS NULL OR (t.result = :expense AND COALESCE(t.category, m.category, :uncat) = :category))
+          AND (:category IS NULL OR (t.result = :expense AND EXISTS(SELECT 1 FROM effective_allocations a WHERE a.source=t.source AND a.tx_id=t.tx_id AND a.category=:category)))
           AND (:keyword IS NULL OR t.counterparty LIKE '%' || :keyword || '%' OR t.item LIKE '%' || :keyword || '%')
         AND (:start IS NULL OR substr(t.tx_time, 1, 10) >= :start)
           AND (:end IS NULL OR substr(t.tx_time, 1, 10) <= :end)
@@ -219,13 +213,13 @@ def person_counterparties(conn: sqlite3.Connection) -> set[str]:
     """有过转账、红包、扫个人二维码这类交易的交易对方，也就是真人。"""
     marks = ", ".join("?" * len(PERSON_TYPES))
     return {name for (name,) in conn.execute(
-        f"SELECT DISTINCT counterparty FROM transactions WHERE tx_type IN ({marks})", sorted(PERSON_TYPES))}
+        f"SELECT DISTINCT counterparty FROM effective_transactions WHERE tx_type IN ({marks})", sorted(PERSON_TYPES))}
 
 
 def month_by_counterparty(conn: sqlite3.Connection, month: str) -> list[tuple[str, int, int]]:
     """这个月每个交易对方的消费：（交易对方, 笔数, 金额），金额大的在前。"""
     return conn.execute("""
-        SELECT counterparty, COUNT(*), SUM(counted_cents) FROM transactions
+        SELECT counterparty, COUNT(*), SUM(counted_cents) FROM effective_transactions
         WHERE result = ? AND substr(tx_time, 1, 7) = ?
         GROUP BY counterparty ORDER BY 3 DESC, counterparty
     """, (EXPENSE, month)).fetchall()
@@ -233,7 +227,7 @@ def month_by_counterparty(conn: sqlite3.Connection, month: str) -> list[tuple[st
 
 def months(conn: sqlite3.Connection) -> list[str]:
     return [month for (month,) in conn.execute(
-        "SELECT DISTINCT substr(tx_time, 1, 7) AS month FROM transactions ORDER BY month DESC")]
+        "SELECT DISTINCT substr(tx_time, 1, 7) AS month FROM effective_transactions ORDER BY month DESC")]
 
 
 def month_totals(conn: sqlite3.Connection, month: str) -> tuple[int, int]:
@@ -241,41 +235,26 @@ def month_totals(conn: sqlite3.Connection, month: str) -> tuple[int, int]:
     return conn.execute("""
         SELECT COALESCE(SUM(CASE WHEN result = ? THEN counted_cents END), 0),
                COALESCE(SUM(CASE WHEN result = ? THEN counted_cents END), 0)
-        FROM transactions WHERE substr(tx_time, 1, 7) = ?
+        FROM effective_transactions WHERE substr(tx_time, 1, 7) = ?
     """, (EXPENSE, INCOME, month)).fetchone()
 
 
-def month_by_category(conn: sqlite3.Connection, month: str) -> list[tuple[str, int]]:
-    """这个月各类消费，金额大的在前。规则定的类别优先，其次是对照表，都没有就是未归类。"""
-    return conn.execute("""
-        SELECT COALESCE(t.category, m.category, ?) AS cat, SUM(t.counted_cents) AS cents
-        FROM transactions t
-        LEFT JOIN counterparty_categories m ON m.counterparty = t.counterparty
-        WHERE t.result = ? AND substr(t.tx_time, 1, 7) = ?
-        GROUP BY cat
-        ORDER BY cents DESC, cat
-    """, (UNCATEGORIZED, EXPENSE, month)).fetchall()
+def month_by_category(conn,month):
+    return conn.execute("SELECT a.category,SUM(a.counted_cents) FROM effective_allocations a JOIN transactions t USING(source,tx_id) WHERE substr(t.tx_time,1,7)=? GROUP BY a.category ORDER BY 2 DESC,a.category",(month,)).fetchall()
 
 
-def category_transactions(conn: sqlite3.Connection, month: str, category: str) -> list[tuple[str, str, str, int]]:
-    """某月某一类的每一笔消费：（时间, 交易对方, 商品, 计入金额），晚的在前。"""
-    return conn.execute("""
-        SELECT t.tx_time, t.counterparty, t.item, t.counted_cents
-        FROM transactions t
-        LEFT JOIN counterparty_categories m ON m.counterparty = t.counterparty
-        WHERE t.result = ? AND substr(t.tx_time, 1, 7) = ? AND COALESCE(t.category, m.category, ?) = ?
-        ORDER BY t.tx_time DESC
-    """, (EXPENSE, month, UNCATEGORIZED, category)).fetchall()
+def category_transactions(conn,month,category):
+    return conn.execute("SELECT t.tx_time,t.counterparty,t.item,a.counted_cents FROM effective_allocations a JOIN transactions t USING(source,tx_id) WHERE substr(t.tx_time,1,7)=? AND a.category=? ORDER BY t.tx_time DESC,t.source,t.tx_id",(month,category)).fetchall()
 
 
 def daily_expense(conn: sqlite3.Connection, month: str) -> list[tuple[str, int]]:
     """这个月每天的消费：从 1 号排到最后一笔交易那天，没有消费的日子记 0。"""
-    last = conn.execute("SELECT MAX(substr(tx_time, 1, 10)) FROM transactions WHERE substr(tx_time, 1, 7) = ?",
+    last = conn.execute("SELECT MAX(substr(tx_time, 1, 10)) FROM effective_transactions WHERE substr(tx_time, 1, 7) = ?",
                         (month,)).fetchone()[0]
     if last is None:
         return []
     spent = dict(conn.execute("""
-        SELECT substr(tx_time, 1, 10), SUM(counted_cents) FROM transactions
+        SELECT substr(tx_time, 1, 10), SUM(counted_cents) FROM effective_transactions
         WHERE result = ? AND substr(tx_time, 1, 7) = ? GROUP BY 1
     """, (EXPENSE, month)).fetchall())
     days = (f"{month}-{d:02d}" for d in range(1, int(last[8:10]) + 1))
@@ -286,7 +265,7 @@ def recent_months(conn: sqlite3.Connection, n: int = 6) -> list[tuple[str, int]]
     """最近 n 个有交易的月份，以及每月的消费，按时间从早到晚。"""
     rows = conn.execute("""
         SELECT substr(tx_time, 1, 7) AS month, COALESCE(SUM(CASE WHEN result = ? THEN counted_cents END), 0)
-        FROM transactions GROUP BY month ORDER BY month DESC LIMIT ?
+        FROM effective_transactions GROUP BY month ORDER BY month DESC LIMIT ?
     """, (EXPENSE, n)).fetchall()
     return rows[::-1]
 
@@ -325,6 +304,8 @@ def add_category(conn: sqlite3.Connection, name: str) -> str:
     with conn:
         conn.execute("INSERT INTO categories (name, position) "
                      "VALUES (?, (SELECT COALESCE(MAX(position), 0) + 1 FROM categories))", (name,))
+        from bill_pipeline.migrations import bump_revision
+        bump_revision(conn)
     return name
 
 

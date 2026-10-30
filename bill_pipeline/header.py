@@ -24,3 +24,16 @@ def parse_period(text: str) -> tuple[str, str]:
     if not (start and end):
         raise BillError("说明行里找不到起止时间")
     return start.group(1).strip(), end.group(1).strip()
+
+
+def parse_export_metadata(text: str) -> tuple[str | None, str | None]:
+    from datetime import datetime
+    match = re.search(r"导出时间[：:]\s*\[?(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", text)
+    exported = None
+    if match:
+        try:
+            exported = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S").isoformat(sep=" ")
+        except ValueError:
+            pass
+    scope = re.search(r"导出(?:类型|范围)[：:]\s*\[?([^\]\n]+)", text)
+    return exported, scope.group(1).strip() if scope else None

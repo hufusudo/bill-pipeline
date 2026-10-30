@@ -2,7 +2,7 @@
 import pandas as pd
 
 from bill_pipeline.convert import to_cents, to_time_text
-from bill_pipeline.header import parse_period, parse_summary
+from bill_pipeline.header import parse_period, parse_summary, parse_export_metadata
 from bill_pipeline.model import ROW_COLUMNS, BillError, ParsedBill
 
 TITLE = "微信支付账单明细"
@@ -52,7 +52,7 @@ def read_wechat(src) -> ParsedBill:
     period_start, period_end = parse_period(text)
     records = [_parse_row(row, position, excel_row=i + 1)
                for i, row in enumerate(cells) if i > header_at and not all(_is_blank(v) for v in row)]
-    return ParsedBill("微信", period_start, period_end, summary, pd.DataFrame(records, columns=ROW_COLUMNS))
+    return ParsedBill("微信", period_start, period_end, summary, pd.DataFrame(records, columns=ROW_COLUMNS), *parse_export_metadata(text))
 
 
 def _parse_row(row: list, position: dict[str, int], excel_row: int) -> dict:

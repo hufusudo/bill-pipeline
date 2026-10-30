@@ -27,6 +27,8 @@ class ParsedBill:
     period_end: str
     summary: Summary
     rows: pd.DataFrame
+    exported_at: str | None = None
+    export_scope: str | None = None
 
 
 ROW_COLUMNS = [

@@ -20,6 +20,8 @@ class ImportReport:
     skipped: int
     unknown: int
     recon: list[ReconLine]
+    updated: int = 0
+    conflicts: int = 0
 
 
 def read_bill(src, file_name: str) -> ParsedBill:
@@ -38,6 +40,8 @@ def import_bill(conn, src, file_name: str) -> ImportReport:
     rows = apply_rules(bill.rows, bill.source)
     recon = reconcile(rows, bill.summary)
     # 入库放在最后：前面任何一步拒收，库里都不会多出东西
-    new, skipped = save_import(conn, bill, rows, file_name)
+    from bill_pipeline.observations import observe_import
+    changes = observe_import(conn,bill,rows,file_name)
+    new, skipped = changes.new, changes.duplicate
     return ImportReport(file_name, bill.source, bill.period_start, bill.period_end,
-                        len(rows), new, skipped, int((rows.result == UNKNOWN).sum()), recon)
+                        len(rows), new, skipped, int((rows.result == UNKNOWN).sum()), recon, changes.updated, changes.conflicts)
