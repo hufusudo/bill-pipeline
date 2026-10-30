@@ -150,6 +150,66 @@ def test_request_cancel_ignores_late_answer(conn):
     assert result.status == 'cancelled' and '迟到回答' not in result.text
 
 
+def test_query_timeout_keeps_results_and_summarizes(conn):
+    now = [0.0]
+    llm = FakeLLM([{'tool_calls': [('list_months', {})]}, {'content': '太迟了'}, {'content': '已有结果的总结'}])
+    original = llm.chat.completions.create
+    def advance(**kw):
+        response = original(**kw)
+        if len(llm.calls) == 2:
+            now[0] = 61
+        return response
+    llm.chat.completions.create = advance
+    result = ask(llm, 'fake', conn, '问题', '2026-10', clock=lambda: now[0])
+    assert result.status == 'timeout' and result.text == '已有结果的总结'
+    assert len(result.steps) == 1 and len(llm.calls) == 3
+
+
+def test_summary_timeout_and_error_do_not_leak_secrets(conn):
+    llm = FakeLLM([{'tool_calls': [('list_months', {})]}] * 3)
+    result = ask(llm, 'fake', conn, '问题', '2026-10')
+    assert result.status == 'error' and result.steps
+    assert 'FakeLLM 的回复用完了' not in result.reason
+
+
+def test_compare_math_and_missing_month(conn):
+    with conn:
+        conn.execute("UPDATE transactions SET tx_time='2026-09-01 12:00:00' WHERE counterparty='星光球馆'")
+    result = run_tool(conn, 'compare_months', {'base_month': '2026-09', 'target_month': '2026-10'})
+    assert result['base']['expense'] == '40.00'
+    assert result['target']['expense'] == '45.50' and result['delta'] == '5.50'
+    assert result['change_percent'] == 13.8
+    assert 'error' in run_tool(conn, 'compare_months', {'base_month':'2026-08','target_month':'2026-10'})
+
+
+@pytest.mark.parametrize('args', [
+    {'start_date':'2026-10-02','end_date':'2026-10-01'},
+    {'start_date':'2025-01-01','end_date':'2026-01-02'},
+    {'start_date':'2026-1-1','end_date':'2026-10-02'},
+    {'start_date':'2026-10-01','end_date':'2026-10-31','group_by':'sql'},
+])
+def test_range_rejects_invalid_input(conn, args):
+    assert 'error' in run_tool(conn, 'range_summary', args)
+
+
+def test_stable_pagination_identical_timestamps(conn):
+    with conn:
+        conn.execute("UPDATE transactions SET tx_time='2026-10-01 12:00:00'")
+    all_rows = run_tool(conn, 'search_transactions', {'limit':50})
+    pages = [run_tool(conn, 'search_transactions', {'limit':1,'offset':i})['rows'][0]
+             for i in range(all_rows['count'])]
+    assert pages == all_rows['rows']
+    assert 'error' in run_tool(conn, 'search_transactions', {'offset':True})
+
+
+def test_range_includes_endpoints_and_masks_person_detail(conn):
+    result = run_tool(conn, 'range_summary', {'start_date':'2026-10-02','end_date':'2026-10-03','group_by':'day'})
+    assert result['totals']['expense'] == '73.00'
+    assert [g['key'] for g in result['groups']] == ['2026-10-02','2026-10-03']
+    rows = run_tool(conn, 'search_transactions', {'start_date':'2026-10-03','end_date':'2026-10-03'})['rows']
+    assert all(r['counterparty'] == '个人收款' and r['item'] == '' for r in rows)
+
+
 
 def test_ask_api_error_raises(conn):
     with pytest.raises(AIError, match="调用模型出错"):

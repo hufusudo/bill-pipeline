@@ -265,3 +265,49 @@ body { background: #e9edf2; color: #111827;
 @media (max-width: 760px) { .split { grid-template-columns: 1fr; } .hero-num { font-size: 40px; }
   .rail { width: 64px; } .nav { width: 52px; } .panels .q-tab-panel, .topbar { padding-left: 18px; padding-right: 18px; } }
 """
+
+# 研究室样式仅作用于问答页，不覆盖其他面板。
+CSS += """
+.ask-room { width: 100%; max-width: 1320px; margin: 12px auto; color: #203c32; }
+.ask-kicker { color: #158465; font-size: 11px; letter-spacing: .16em; font-weight: 650; }
+.ask-title { font-size: 25px; font-weight: 650; letter-spacing: -.04em; }
+.ask-workspace { display: grid; grid-template-columns: minmax(0, 7fr) minmax(240px, 3fr); gap: 42px; margin-top: 32px; }
+.ask-main { min-width: 0; width: 100%; gap: 16px; }
+.ask-welcome { white-space: pre-line; font-size: clamp(26px, 3vw, 42px); font-weight: 650; line-height: 1.4; letter-spacing: -.05em; margin-top: 25px; }
+.ask-intro { font-size: 14px; line-height: 1.9; color: #728179; margin-bottom: 15px; }
+.ask-example { width: 100%; color: #46735f; border: 1px solid #e4ece5; border-radius: 12px; background: #f7faf6; padding: 11px 14px; font-size: 13px; text-align: left; }
+.ask-question { font-size: 20px; font-weight: 600; line-height: 1.7; overflow-wrap: anywhere; }
+.ask-progress { padding: 11px 0; color: #158465; font-size: 12px; border-bottom: 1px solid #e2eae2; width: 100%; }
+.ask-answer { width: 100%; line-height: 1.9; overflow-wrap: anywhere; }
+.ask-answer h1, .ask-answer h2, .ask-answer h3 { color: #203c32; line-height: 1.55; }
+.ask-answer table { display: block; overflow-x: auto; max-width: 100%; }
+.ask-composer { width: 100%; padding: 12px 18px; border: 1px solid #cfddd3; border-radius: 16px; background: #fff; box-shadow: 0 8px 30px #173c2e08; margin-top: 10px; gap: 6px; }
+.ask-composer .q-field__native { font-size: 14px; }
+.ask-composer .q-btn { border-radius: 9px; }
+.ask-mode { width: 140px; font-size: 12px; }
+.ask-evidence { width: 100%; min-width: 0; border-left: 1px solid #e4ebe4; padding-left: 26px; gap: 12px; }
+.ask-evidence-title { font-size: 13px; font-weight: 650; }
+.ask-evidence-card { width: 100%; border-bottom: 1px solid #e4ebe4; font-size: 12px; overflow-wrap: anywhere; }
+.ask-evidence-card .q-item { padding-left: 0; padding-right: 0; }
+.ask-evidence-card .q-item__label { overflow-wrap: anywhere; }
+.ask-evidence-card .q-expansion-item__content { padding-bottom: 12px; }
+.ask-evidence-card .q-table__container { max-width: 100%; overflow-x: auto; }
+.ask-footnote { color: #75857c; font-size: 11px; line-height: 1.9; overflow-wrap: anywhere; }
+.ask-history { flex-wrap: nowrap; width: 100%; overflow-x: auto; gap: 4px; padding-bottom: 5px; }
+.ask-history-item { flex-shrink: 0; max-width: 220px; font-size: 11px; border-radius: 7px; background: #f0f5ef; }
+.ask-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; width: 100%; }
+.ask-metric { padding: 16px 14px; border: 1px solid #e3ebe3; border-radius: 12px; background: #fafcf9; }
+.ask-money { font-variant-numeric: tabular-nums; font-size: clamp(18px, 2.1vw, 27px); font-weight: 600; margin-top: 8px; letter-spacing: -.03em; overflow-wrap: anywhere; }
+@media (max-width: 900px) {
+  .ask-workspace { grid-template-columns: minmax(0, 1fr); gap: 28px; }
+  .ask-evidence { border-left: 0; border-top: 1px solid #e4ebe4; padding: 20px 0 0; }
+}
+@media (max-width: 520px) {
+  .ask-room { margin-top: 6px; }
+  .ask-title { font-size: 22px; }
+  .ask-metrics { grid-template-columns: minmax(0, 1fr); }
+  .ask-workspace { margin-top: 20px; }
+  .ask-question { font-size: 18px; }
+  .ask-composer { padding: 10px 12px; }
+}
+"""

@@ -54,3 +54,9 @@ def test_waterfall_bases_and_values():
     assert option["xAxis"]["data"] == ["账单支出", "全额退款的原交易", "实际消费"]
     assert option["series"][0]["data"] == [0, 85.5, 0]
     assert [v["value"] for v in option["series"][1]["data"]] == [112.3, 26.8, 85.5]
+def test_answer_workspace_responsive_style():
+    from web.theme import CSS
+    assert '.ask-workspace' in CSS
+    assert 'minmax(0, 7fr)' in CSS
+    assert '@media (max-width: 900px)' in CSS
+
