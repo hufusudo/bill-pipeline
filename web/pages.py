@@ -46,6 +46,8 @@ class Context:
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
+        self.closed = False
+        self.heartbeat_timer = None
         all_months = months(conn)
         self.month: str | None = all_months[0] if all_months else None
         self.page = "overview"
@@ -58,6 +60,24 @@ class Context:
         self.ai_busy = False
         self.ai_error: str | None = None
         self.sort_card = None
+
+    def heartbeat(self):
+        if self.closed:
+            return
+        from bill_pipeline import conversations as chats
+        chats.heartbeat_instance(self.conn,chats.INSTANCE_ID)
+        chats.interrupt_owned_messages(self.conn,chats.INSTANCE_ID)
+
+    def close(self):
+        if self.closed:
+            return
+        self.closed = True
+        if self.heartbeat_timer is not None:
+            self.heartbeat_timer.cancel()
+        try:
+            self.ask_session.stop()
+        finally:
+            self.conn.close()
 
 
 def open_category(ctx: Context, category: str) -> None:
@@ -415,10 +435,8 @@ def register() -> None:
             return
         reclassify_unknown(conn)  # 程序更新、补了清洗规则以后，旧的“未识别”交易按新规则重新判断
         ctx = Context(conn)
-        ui.context.client.on_disconnect(ctx.ask_session.stop)
-        ui.context.client.on_disconnect(conn.close)
-        from bill_pipeline import conversations as chats
-        ui.timer(5, lambda: (chats.heartbeat_instance(conn,chats.INSTANCE_ID), chats.interrupt_owned_messages(conn,chats.INSTANCE_ID)))
+        ctx.heartbeat_timer=ui.timer(5,ctx.heartbeat)
+        ui.context.client.on_disconnect(ctx.close)
         navs = {}
 
         def show(page: str) -> None:

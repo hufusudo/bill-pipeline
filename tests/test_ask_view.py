@@ -39,3 +39,12 @@ def test_unsaved_result_cannot_be_discarded_by_new_chat():
     session=AskSession()
     session.pending_save=('m','r',Answer('尚未保存',[]))
     with pytest.raises(ValueError):session.clear()
+
+
+def test_closed_page_stops_heartbeat_before_connection_closes():
+    from bill_pipeline.db import connect
+    from web.pages import Context
+    c=connect(':memory:');ctx=Context(c)
+    ctx.close()
+    ctx.heartbeat()
+    ctx.close()  # 重复断开也安全。
