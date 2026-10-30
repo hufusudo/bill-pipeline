@@ -3,6 +3,7 @@ import json
 import re
 import sqlite3
 from datetime import date
+from decimal import Decimal
 from typing import NamedTuple
 
 from bill_pipeline.ai import AIError
@@ -87,7 +88,7 @@ def daily_spending(conn: sqlite3.Connection, month: str) -> dict:
 
 def top_counterparties(conn: sqlite3.Connection, month: str, limit: int = 5) -> dict:
     _month(conn, month)
-    limit = min(int(limit), MAX_ROWS)
+    limit = _integer(limit, "limit", 1, MAX_ROWS)
     people = person_counterparties(conn)
     merged: dict[str, list[int]] = {}  # 付给个人的合成一项，免得出现好几个“个人收款”
     for who, count, cents in month_by_counterparty(conn, month):
@@ -99,27 +100,107 @@ def top_counterparties(conn: sqlite3.Connection, month: str, limit: int = 5) -> 
 
 
 def search_transactions(conn: sqlite3.Connection, month: str | None = None, category: str | None = None,
-                        keyword: str | None = None, limit: int = 20) -> dict:
+                        keyword: str | None = None, limit: int = 20, *,
+                        start_date: str | None = None, end_date: str | None = None, offset: int = 0) -> dict:
     if month is not None:
         _month(conn, month)
     if category is not None:
         _category(conn, category)
-    limit = min(int(limit), MAX_ROWS)
+    limit = _integer(limit, "limit", 1, MAX_ROWS)
+    offset = _integer(offset, "offset", 0)
+    if start_date is not None or end_date is not None:
+        _dates(start_date, end_date)
+    if keyword is not None and not isinstance(keyword, str):
+        raise ValueError("关键词必须是文字")
     people = person_counterparties(conn)
-    found = find_transactions(conn, month, category, keyword or None)
+    found = find_transactions(conn, month, category, keyword or None, start_date=start_date, end_date=end_date)
     totals = {EXPENSE: 0, INCOME: 0}
     for f in found:
         if f.result in totals:
             totals[f.result] += f.counted_cents
     rows = [{**_row(people, f.tx_time, f.counterparty, f.item, f.amount_cents), "direction": f.direction,
-             "counted_as": f.result, "why": f.reason, "category": f.category} for f in found[:limit]]
-    return {"count": len(found), "totals": {k: yuan(v) for k, v in totals.items()}, "rows": rows}
+             "counted_as": f.result, "why": f.reason, "category": f.category} for f in found[offset:offset + limit]]
+    return {"count": len(found), "totals": {k: yuan(v) for k, v in totals.items()}, "rows": rows, "offset": offset,
+            "has_more": offset + len(rows) < len(found), "truncated": len(rows) < len(found)}
+
+
+def _integer(value, name: str, lower: int, upper: int | None = None) -> int:
+    if type(value) is not int or value < lower or (upper is not None and value > upper):
+        raise ValueError(f"{name} 要是 {lower} 到 {upper if upper is not None else '任意上限'} 的整数")
+    return value
+
+
+def _dates(start: str, end: str) -> tuple[date, date]:
+    if not isinstance(start, str) or not isinstance(end, str):
+        raise ValueError("起止日期都要填写 YYYY-MM-DD")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", start) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", end):
+        raise ValueError("日期格式为 YYYY-MM-DD")
+    a, b = date.fromisoformat(start), date.fromisoformat(end)
+    if not 0 <= (b - a).days < 366:
+        raise ValueError("起止日期应有序，最多包含 366 天")
+    return a, b
+
+
+def _percent(delta: int, base: int) -> float | None:
+    return float((Decimal(delta) * 100 / base).quantize(Decimal("0.1"))) if base else None
+
+
+def compare_months(conn, base_month: str, target_month: str) -> dict:
+    _month(conn, base_month)
+    _month(conn, target_month)
+    a, ai = month_totals(conn, base_month)
+    b, bi = month_totals(conn, target_month)
+    ac, bc = dict(month_by_category(conn, base_month)), dict(month_by_category(conn, target_month))
+    delta = b - a
+    return {"base_month": base_month, "target_month": target_month,
+            "base": {"expense": yuan(a), "income": yuan(ai), "net": yuan(ai-a)},
+            "target": {"expense": yuan(b), "income": yuan(bi), "net": yuan(bi-b)},
+            "delta": yuan(delta), "change_percent": _percent(delta, a),
+            "note": "基期为零，无法计算增幅" if not a else ("消费未增加，不计算增长贡献" if delta <= 0 else ""),
+            "by_category": [{"category": c, "base": yuan(ac.get(c, 0)), "target": yuan(bc.get(c, 0)),
+                             "delta": yuan(bc.get(c, 0)-ac.get(c, 0)),
+                             "contribution_percent": _percent(bc.get(c, 0)-ac.get(c, 0), delta) if delta > 0 else None}
+                            for c in sorted(ac.keys() | bc.keys(), key=lambda c: -(bc.get(c, 0)-ac.get(c, 0)))]}
+
+
+def range_summary(conn, start_date: str, end_date: str, group_by: str = "month") -> dict:
+    a, b = _dates(start_date, end_date)
+    if group_by not in ("day", "month", "category"):
+        raise ValueError("group_by 只能是 day、month 或 category")
+    found = find_transactions(conn, start_date=start_date, end_date=end_date)
+    groups = {}
+    totals = {"expense": 0, "income": 0}
+    for row in found:
+        kind = "expense" if row.result == EXPENSE else "income" if row.result == INCOME else None
+        if kind is None:
+            continue
+        key = row.tx_time[:10 if group_by == "day" else 7] if group_by != "category" else (row.category or "收入")
+        entry = groups.setdefault(key, {"expense": 0, "income": 0})
+        entry[kind] += row.counted_cents
+        totals[kind] += row.counted_cents
+    wanted = []
+    cursor = a.replace(day=1)
+    while cursor <= b:
+        wanted.append(cursor.strftime("%Y-%m"))
+        if cursor.year == 9999 and cursor.month == 12:
+            break
+        cursor = date(cursor.year + (cursor.month == 12), cursor.month % 12 + 1, 1)
+    present = sorted({row.tx_time[:7] for row in found})
+    return {"start_date": start_date, "end_date": end_date, "group_by": group_by,
+            "totals": {k: yuan(v) for k, v in totals.items()},
+            "groups": [{"key": key, **{k: yuan(v) for k, v in value.items()}} for key, value in sorted(groups.items())][:366],
+            "truncated": len(groups) > 366,
+            "coverage": {"first_date": min((r.tx_time[:10] for r in found), default=None),
+                         "last_date": max((r.tx_time[:10] for r in found), default=None),
+                         "present_months": present, "missing_months": [m for m in wanted if m not in present],
+                         "note": "有交易不代表当月账单完整；无账单不等于零消费"}}
 
 
 TOOL_FUNCTIONS = {f.__name__: f for f in (list_months, month_summary, category_detail, daily_spending,
-                                          top_counterparties, search_transactions)}
+                                          top_counterparties, search_transactions, compare_months, range_summary)}
 TOOL_LABELS = {"list_months": "列出月份", "month_summary": "月度汇总", "category_detail": "分类明细",
-               "daily_spending": "每天的消费", "top_counterparties": "花钱最多的对象", "search_transactions": "查明细"}
+               "daily_spending": "每天的消费", "top_counterparties": "花钱最多的对象", "search_transactions": "查明细",
+               "compare_months": "跨月对比", "range_summary": "日期范围汇总"}
 
 
 def _tool(name: str, description: str, properties: dict | None = None, required: tuple = ()) -> dict:
@@ -142,6 +223,22 @@ TOOLS = [
           {"month": MONTH, "category": CATEGORY, "keyword": {"type": "string", "description": "关键词，比如 球馆"},
            "limit": {"type": "integer", "description": "最多返回几笔明细，默认 20"}}),
 ]
+
+
+TOOLS.extend([
+    _tool("compare_months", "比较两个月消费、收入、分类增量；增幅由程序计算",
+          {"base_month": MONTH, "target_month": MONTH}, ("base_month", "target_month")),
+    _tool("range_summary", "指定日期范围内按日、月或分类汇总；包含首尾日期，最长366天",
+          {"start_date": {"type": "string"}, "end_date": {"type": "string"},
+           "group_by": {"type": "string", "enum": ["day", "month", "category"]}}, ("start_date", "end_date")),
+])
+TOOLS[5]["function"]["parameters"]["properties"].update({
+    "start_date": {"type": "string", "description": "起始日YYYY-MM-DD，须同时填写结束日"},
+    "end_date": {"type": "string", "description": "结束日YYYY-MM-DD，包含当天"},
+    "offset": {"type": "integer", "minimum": 0, "description": "分页偏移，默认0"},
+})
+for schema in (TOOLS[4], TOOLS[5]):
+    schema["function"]["parameters"]["properties"]["limit"].update(minimum=1, maximum=50)
 
 
 def run_tool(conn: sqlite3.Connection, name: str, args) -> dict:

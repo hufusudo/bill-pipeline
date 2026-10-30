@@ -196,7 +196,8 @@ class Found(NamedTuple):
 
 
 def find_transactions(conn: sqlite3.Connection, month: str | None = None, category: str | None = None,
-                      keyword: str | None = None) -> list[Found]:
+                      keyword: str | None = None, *,
+                      start_date: str | None = None, end_date: str | None = None) -> list[Found]:
     """按月份、分类、关键词（匹配交易对方和商品）查明细，是 None 的条件不限。晚的在前。"""
     rows = conn.execute("""
         SELECT t.tx_time, t.counterparty, t.item, t.direction, t.amount_cents, t.counted_cents, t.result, t.reason,
@@ -206,8 +207,10 @@ def find_transactions(conn: sqlite3.Connection, month: str | None = None, catego
         WHERE (:month IS NULL OR substr(t.tx_time, 1, 7) = :month)
           AND (:category IS NULL OR (t.result = :expense AND COALESCE(t.category, m.category, :uncat) = :category))
           AND (:keyword IS NULL OR t.counterparty LIKE '%' || :keyword || '%' OR t.item LIKE '%' || :keyword || '%')
-        ORDER BY t.tx_time DESC
-    """, {"expense": EXPENSE, "uncat": UNCATEGORIZED, "month": month, "category": category,
+        AND (:start IS NULL OR substr(t.tx_time, 1, 10) >= :start)
+          AND (:end IS NULL OR substr(t.tx_time, 1, 10) <= :end)
+        ORDER BY t.tx_time DESC, t.source, t.tx_id
+    """, {"start": start_date, "end": end_date, "expense": EXPENSE, "uncat": UNCATEGORIZED, "month": month, "category": category,
           "keyword": keyword}).fetchall()
     return [Found(*row) for row in rows]
 

@@ -52,6 +52,29 @@ def test_search_transactions_totals(conn):
     assert result["count"] == 1 and result["totals"]["消费"] == "40.00"
 
 
+def test_compare_and_range_tools(conn):
+    result = run_tool(conn, "compare_months", {"base_month": "2026-10", "target_month": "2026-10"})
+    assert result["delta"] == "0.00"
+    assert all(r["contribution_percent"] is None for r in result["by_category"])
+    result = run_tool(conn, "range_summary", {"start_date": "2026-09-01", "end_date": "2026-10-31"})
+    assert result["totals"]["expense"] == "85.50"
+    assert result["coverage"]["missing_months"] == ["2026-09"]
+
+
+@pytest.mark.parametrize("limit", [0, -1, True, 1.5, 51])
+def test_limit_validation(conn, limit):
+    assert "error" in run_tool(conn, "search_transactions", {"limit": limit})
+
+
+def test_search_pagination_and_dates(conn):
+    first = run_tool(conn, "search_transactions", {"limit": 1, "offset": 0})
+    second = run_tool(conn, "search_transactions", {"limit": 1, "offset": 1})
+    assert first["has_more"] and first["truncated"]
+    assert first["totals"] == second["totals"]
+    assert first["rows"] != second["rows"]
+    assert "error" in run_tool(conn, "range_summary", {"start_date": "2026-02-30", "end_date": "2026-10-31"})
+
+
 def test_ask_masks_people(conn):
     llm = FakeLLM([{"tool_calls": [("search_transactions", {"month": "2026-10"})]}, {"content": "查完了"}])
     ask(llm, "fake", conn, "这个月的钱都去哪了", "2026-10")
