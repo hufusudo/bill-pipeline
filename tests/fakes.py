@@ -160,7 +160,12 @@ class FakeLLM:
     def __init__(self, replies):
         self.replies = list(replies)
         self.calls = []
+        self.options = []
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+    def with_options(self, **kwargs):
+        self.options.append(kwargs)
+        return self
 
     def _create(self, **kwargs):
         self.calls.append(kwargs)

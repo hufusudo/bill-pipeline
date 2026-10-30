@@ -93,10 +93,62 @@ def test_ask_returns_answer_and_steps(conn):
 
 
 def test_ask_stops_after_max_steps(conn):
-    llm = FakeLLM([{"tool_calls": [("list_months", {})]}] * MAX_STEPS)
+    replies = [{"tool_calls": [("search_transactions", {"limit": n})]} for n in range(1, 6)]
+    llm = FakeLLM(replies + [{"content": "根据已有数据，阶段性结论。"}])
     answer = ask(llm, "fake", conn, "随便问问", "2026-10")
-    assert answer.text == GAVE_UP
-    assert len(answer.steps) == MAX_STEPS and len(llm.calls) == MAX_STEPS
+    assert answer.text == "根据已有数据，阶段性结论。" and answer.status == "partial"
+    assert len(answer.steps) == MAX_STEPS and len(llm.calls) == MAX_STEPS + 1
+    assert llm.calls[-1]["tool_choice"] == "none"
+    assert all(o['max_retries'] == 0 and o['timeout'] <= 30 for o in llm.options)
+
+
+def test_deep_mode_and_history(conn):
+    from bill_pipeline.assistant_state import Turn, Answer
+    llm = FakeLLM([{"tool_calls": [("search_transactions", {"limit": n})]} for n in range(1, 8)] + [{"content": "完成"}])
+    result = ask(llm, "fake", conn, "继续", "2026-10", mode="deep",
+                 history=[Turn("原问题", "2026-09", Answer("原答", []))])
+    assert result.status == "complete" and result.batches == 7
+    assert "原问题" in str(llm.calls[0]) and "2026-09" in str(llm.calls[0])
+
+
+def test_duplicate_queries_and_forbidden_final_tools(conn):
+    llm = FakeLLM([{"tool_calls": [("list_months", {})]}] * 4)
+    result = ask(llm, "fake", conn, "问题", "2026-10")
+    assert len(result.steps) == 3 and len(llm.calls) == 4
+    assert result.status == "partial"
+    assert llm.calls[-1]['tool_choice'] == 'none'
+
+
+def test_batch_limit_has_all_tool_replies(conn):
+    llm = FakeLLM([{"tool_calls": [("search_transactions", {"limit": n}) for n in range(1, 9)]}, {"content": "完成"}])
+    result = ask(llm, "fake", conn, "问题", "2026-10")
+    assert len(result.steps) == 8
+    assert sum('error' not in s.result for s in result.steps) == 6
+    assert len([m for m in llm.calls[-1]['messages'] if isinstance(m, dict) and m['role']=='tool']) == 8
+
+
+def test_cancelled_never_calls_model(conn):
+    from bill_pipeline.assistant_state import RunState
+    state = RunState()
+    state.cancel.set()
+    llm = FakeLLM([])
+    result = ask(llm, 'fake', conn, '问题', '2026-10', run_state=state)
+    assert result.status == 'cancelled' and not llm.calls
+
+
+def test_request_cancel_ignores_late_answer(conn):
+    from bill_pipeline.assistant_state import RunState
+    state = RunState()
+    llm = FakeLLM([{'content':'迟到回答'}])
+    original = llm.chat.completions.create
+    def cancel_after(**kw):
+        response = original(**kw)
+        state.cancel.set()
+        return response
+    llm.chat.completions.create = cancel_after
+    result = ask(llm, 'fake', conn, '问题', '2026-10', run_state=state)
+    assert result.status == 'cancelled' and '迟到回答' not in result.text
+
 
 
 def test_ask_api_error_raises(conn):
