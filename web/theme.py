@@ -280,6 +280,8 @@ CSS += """
 .ask-progress { padding: 11px 0; color: #158465; font-size: 12px; border-bottom: 1px solid #e2eae2; width: 100%; }
 .ask-answer { width: 100%; line-height: 1.9; overflow-wrap: anywhere; }
 .ask-answer h1, .ask-answer h2, .ask-answer h3 { color: #203c32; line-height: 1.55; }
+.ask-answer h1, .ask-answer h2 { font-size: 27px; font-weight: 600; letter-spacing: -.03em; }
+.ask-answer h3 { font-size: 20px; font-weight: 600; }
 .ask-answer table { display: block; overflow-x: auto; max-width: 100%; }
 .ask-composer { width: 100%; padding: 12px 18px; border: 1px solid #cfddd3; border-radius: 16px; background: #fff; box-shadow: 0 8px 30px #173c2e08; margin-top: 10px; gap: 6px; }
 .ask-composer .q-field__native { font-size: 14px; }
@@ -292,6 +294,7 @@ CSS += """
 .ask-evidence-card .q-item__label { overflow-wrap: anywhere; }
 .ask-evidence-card .q-expansion-item__content { padding-bottom: 12px; }
 .ask-evidence-card .q-table__container { max-width: 100%; overflow-x: auto; }
+.ask-evidence-card td, .ask-evidence-card th { white-space: nowrap; }
 .ask-footnote { color: #75857c; font-size: 11px; line-height: 1.9; overflow-wrap: anywhere; }
 .ask-history { flex-wrap: nowrap; width: 100%; overflow-x: auto; gap: 4px; padding-bottom: 5px; }
 .ask-history-item { flex-shrink: 0; max-width: 220px; font-size: 11px; border-radius: 7px; background: #f0f5ef; }
@@ -308,6 +311,7 @@ CSS += """
   .ask-metrics { grid-template-columns: minmax(0, 1fr); }
   .ask-workspace { margin-top: 20px; }
   .ask-question { font-size: 18px; }
+  .ask-answer h1, .ask-answer h2 { font-size: 22px; }
   .ask-composer { padding: 10px 12px; }
 }
 """

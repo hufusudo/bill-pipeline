@@ -245,6 +245,50 @@ async def test_ask_stop_keeps_evidence_and_rejects_late_reply(user: User, db, tm
     await user.should_not_see('不应显示的迟到回答')
 
 
+async def test_ask_deep_mode_reaches_beyond_five_batches(user: User, db, tmp_path, monkeypatch):
+    llm = FakeLLM([{'tool_calls':[('search_transactions', {'limit':n})]} for n in range(1,8)] + [{'content':'深度回答完成'}])
+    monkeypatch.setattr('bill_pipeline.ai.make_client', lambda: (llm, 'fake'))
+    await _ask(user, db, tmp_path, '复杂问题')
+    user.find(marker='ask-mode').elements.pop().set_value('deep')
+    user.find(marker='ask-btn').click()
+    await user.should_see('深度回答完成')
+    await user.should_see('7 批查询')
+    assert len(llm.calls) == 8
+
+
+async def test_ask_partial_answer_visible(user: User, db, tmp_path, monkeypatch):
+    llm = FakeLLM([{'tool_calls':[('search_transactions', {'limit':n})]} for n in range(1,6)] + [{'content':'已经查到的结论'}])
+    monkeypatch.setattr('bill_pipeline.ai.make_client', lambda: (llm, 'fake'))
+    await _ask(user, db, tmp_path, '复杂问题')
+    user.find(marker='ask-btn').click()
+    await user.should_see('阶段性回答')
+    await user.should_see('已经查到的结论')
+
+
+async def test_ask_changed_month_is_explicit(user: User, db, tmp_path, monkeypatch):
+    llm = FakeLLM([{'content':'第一答'}, {'content':'第二答'}])
+    monkeypatch.setattr('bill_pipeline.ai.make_client', lambda: (llm, 'fake'))
+    await _ask(user, db, tmp_path, '这个月呢')
+    # 为测试构建第二个月，重开页面刷新月份选择器。
+    conn = connect(db)
+    with conn:
+        conn.execute("UPDATE transactions SET tx_time='2026-09-01 12:00:00' WHERE counterparty='星光球馆'")
+    conn.close()
+    await user.open('/')
+    user.find(marker='nav-ask').click()
+    await user.should_see(marker='question')
+    user.find(marker='question').type('这个月呢')
+    user.find(marker='ask-btn').click()
+    await user.should_see('第一答')
+    user.find(marker='month').elements.pop().set_value('2026-09')
+    await user.should_see('默认月份已切换')
+    user.find(marker='question').type('那现在呢')
+    user.find(marker='ask-btn').click()
+    await user.should_see('第二答')
+    assert '默认是 2026-09' in llm.calls[-1]['messages'][0]['content']
+    assert '这个月呢' in str(llm.calls[-1]['messages'])
+
+
 async def test_recategorize_updates_ai_accuracy(user: User, db, tmp_path):
     conn = connect(db)
     import_bill(conn, write_wechat_xlsx(tmp_path / "b.xlsx"), "b.xlsx")

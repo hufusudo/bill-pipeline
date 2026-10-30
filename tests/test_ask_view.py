@@ -23,3 +23,12 @@ def test_stop_invalidates_run_and_clear_removes_history():
     assert len(session.turns[-1].answer.steps) == 1
     session.clear()
     assert not session.turns
+
+
+def test_stop_preserves_results_not_yet_polled_by_ui():
+    session = AskSession()
+    state = RunState()
+    session.active_run = state
+    state.publish('result', 1, 'list_months', {'step': Step('list_months', {}, {'months': []})})
+    session.stop()
+    assert len(session.turns[-1].answer.steps) == 1

@@ -1,7 +1,7 @@
 import pytest
 
 from bill_pipeline.ai import AIError
-from bill_pipeline.assistant import GAVE_UP, MAX_STEPS, ask, run_tool
+from bill_pipeline.assistant import MAX_STEPS, ask, run_tool
 from bill_pipeline.db import connect, set_category
 from bill_pipeline.pipeline import import_bill
 from tests.fakes import FakeLLM, write_wechat_xlsx

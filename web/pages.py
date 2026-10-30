@@ -6,7 +6,7 @@ from pathlib import Path
 
 from nicegui import background_tasks, run, ui
 
-from bill_pipeline import ai, assistant
+from bill_pipeline import ai
 from bill_pipeline.db import (Card, add_category, ai_accuracy, asked_counterparties, categories, categorized,
                               category_transactions, connect, daily_expense, import_history, month_by_category,
                               month_totals, months, recent_months, reclassify_unknown, save_suggestions,

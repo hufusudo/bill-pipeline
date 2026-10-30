@@ -27,6 +27,14 @@ class AskSession:
         if self.active_run is None:
             return
         self.active_run.cancel.set()
+        # UI 定时器可能还没消费刚完成的结果，停止时也应保留它们。
+        while True:
+            try:
+                event = self.active_run.events.get_nowait()
+            except queue.Empty:
+                break
+            if event.run_id == self.active_run.run_id and event.kind == 'result':
+                self.current_steps.append(event.detail['step'])
         self.turns.append(Turn(self.current_question, self.current_month,
                                Answer('查询已停止，已取得的依据保留在右侧。', list(self.current_steps),
                                       status='cancelled', reason='已停止')))
@@ -92,7 +100,7 @@ def render_result(result: dict):
         if not rows:
             continue
         columns = [{'name': k, 'label': labels.get(k, k), 'field': k, 'align': 'left'} for k in rows[0]]
-        ui.table(columns=columns, rows=rows, pagination=5).props('dense flat wrap-cells').classes('w-full')
+        ui.table(columns=columns, rows=rows, pagination=5).props('dense flat').classes('w-full')
 
 
 def render_ask(ctx) -> None:

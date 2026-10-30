@@ -15,7 +15,6 @@ from bill_pipeline.rules import EXPENSE, INCOME
 
 MAX_STEPS = 5
 MAX_ROWS = 50  # 一次最多交回这么多笔明细，免得撑爆上下文
-GAVE_UP = f"这个问题我没能在 {MAX_STEPS} 步内查完，换个问法试试。"
 PERSON = "个人收款"
 
 SYSTEM_PROMPT = """你是用户的记账助手，根据用户自己的账单回答问题。
@@ -346,6 +345,7 @@ def ask(client, model: str, conn: sqlite3.Connection, question: str, default_mon
     if not cache:
         return finish(status='timeout' if '超时' in reason or '时间' in reason else 'partial', why=reason)
     messages.append({'role': 'user', 'content': '查询已停止：'+reason+'。不要再调用工具，只根据现有结果给出阶段性结论，说明未完成部分。'})
+    state.publish('query', batches, '整理阶段性回答')
     summary_deadline = clock() + budget.summary_seconds
     try:
         message = request(summary_deadline, final=True)
