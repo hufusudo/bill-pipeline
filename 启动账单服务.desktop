@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=启动账单流水线
+Comment=启动本机账单流水线服务
+Exec=/usr/bin/bash "/home/hf/项目/bill-pipeline/启动账单服务.sh"
+Path=/home/hf/项目/bill-pipeline
+Terminal=true
+Categories=Utility;
