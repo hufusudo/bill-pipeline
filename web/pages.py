@@ -102,13 +102,14 @@ def render_overview(ctx: Context) -> None:
     expense, income = month_totals(ctx.conn, ctx.month)
     previous = previous_month(ctx.month)
     ratio = change_ratio(expense, month_totals(ctx.conn, previous)[0])
-    ui.label(f"{month_name(ctx.month)}消费").classes("hero-label")
-    with ui.element("div").classes("hero-row"):
-        hero = ui.label(money(expense)).classes("hero-num")
-        if ratio is not None:
-            arrow, word, kind = ("↓", "少", "down") if ratio < 0 else ("↑", "多", "up")
-            ui.label(f"{arrow} 比 {month_name(previous)}{word} {abs(ratio) * 100:.1f}%").classes(f"pill {kind}")
-    ui.label(f"收入 {money(income)} · 结余 {money(income - expense)}").classes("sub")
+    with ui.element("div").classes("hero"):
+        ui.label(f"{month_name(ctx.month)}消费").classes("hero-label")
+        with ui.element("div").classes("hero-row"):
+            hero = ui.label(money(expense)).classes("hero-num")
+            if ratio is not None:
+                arrow, word, kind = ("↓", "少", "down") if ratio < 0 else ("↑", "多", "up")
+                ui.label(f"{arrow} 比 {month_name(previous)}{word} {abs(ratio) * 100:.1f}%").classes(f"pill {kind}")
+        ui.label(f"收入 {money(income)} · 结余 {money(income - expense)}").classes("sub")
     ui.run_javascript(f"window.countUp('{hero.html_id}', {expense / 100})")
 
     by_category = month_by_category(ctx.conn, ctx.month)
@@ -123,6 +124,7 @@ def render_overview(ctx: Context) -> None:
         with ui.element("div").classes("legend"):
             for category, cents in by_category:
                 with ui.element("div").classes("legend-row").mark(f"legend-{category}") as row:
+                    row.style(f"--p: {cents / total * 100:.2f}%; --c: {colors.get(category, EXTRA_COLOR)}")
                     ui.element("span").classes("dot").style(f"background:{colors.get(category, EXTRA_COLOR)}")
                     ui.label(category)
                     ui.label(money(cents)).classes("amt")
