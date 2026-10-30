@@ -155,7 +155,7 @@ docs/           design document (Chinese)
 
 ## Local review and history
 
-The **核查** page supports refund evidence, single-transaction categories/splits, counterparty aliases and recoverable advances. All changes show a preview before confirmation, and reject stale previews if the database changed. Source file checks remain separate from personal accounting adjustments.
+The **核查** page supports refund evidence, single-transaction categories/splits, counterparty aliases and recoverable advances. Categories save with one click and offer undo. Refunds and ordinary AA repayments share one return form; AA groups are created internally. Advanced splits, unpaid advances and evidence management stay under More operations. Source conflicts retain confirmation previews, which are rejected if data changed. Source file checks remain separate from personal accounting adjustments.
 
 Database upgrades create an SQLite backup in `data/backups/` before applying transactional schema changes. Source observations are retained; re-imports distinguish new, updated, duplicate and conflicting transactions. Older exports cannot silently revert a confirmed full refund.
 

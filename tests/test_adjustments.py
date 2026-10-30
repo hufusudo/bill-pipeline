@@ -26,6 +26,47 @@ def test_refund_events_and_split_conserve_amounts(ledger):
     assert month_totals(c,'2026-10')[0]==8550
 
 
+def test_simple_aa_return_and_undo_are_atomic(ledger):
+    from bill_pipeline.adjustments import record_return,undo_return
+    c,key=ledger
+    change=record_return(c,'aa',key('星光球馆'),key('爸爸'),1000)
+    assert month_totals(c,'2026-10')==(7550,127800)
+    undo_return(c,change)
+    assert month_totals(c,'2026-10')==(8550,128800)
+    with pytest.raises(ValueError):record_return(c,'aa',key('星光球馆'),key('爸爸'),999999)
+    assert c.execute('SELECT count(*) FROM advance_groups WHERE revoked_at IS NULL').fetchone()[0]==0
+
+
+def test_simple_aa_additional_receipt_updates_own_share(ledger):
+    from bill_pipeline.adjustments import record_return
+    c,key=ledger
+    record_return(c,'aa',key('星光球馆'),key('爸爸'),1000)
+    record_return(c,'aa',key('星光球馆'),key('亲戚'),500)
+    assert month_totals(c,'2026-10')==(7050,127300)
+    repeated=record_return(c,'aa',key('星光球馆'),key('亲戚'),500)
+    assert not repeated['changed']
+    assert month_totals(c,'2026-10')==(7050,127300)
+
+
+def test_simple_return_rolls_back_group_on_write_failure(ledger):
+    import sqlite3
+    from bill_pipeline.adjustments import record_return
+    c,key=ledger
+    c.execute("CREATE TRIGGER fail_return BEFORE INSERT ON repayment_allocations BEGIN SELECT RAISE(ABORT,'test failure'); END")
+    with pytest.raises(sqlite3.IntegrityError):record_return(c,'aa',key('星光球馆'),key('爸爸'),1000)
+    assert c.execute('SELECT count(*) FROM advance_groups').fetchone()[0]==0
+    assert month_totals(c,'2026-10')==(8550,128800)
+
+
+def test_refund_through_unified_entry_can_be_undone(ledger):
+    from bill_pipeline.adjustments import record_return,undo_return
+    c,key=ledger
+    change=record_return(c,'refund',key('星光球馆'),None,500)
+    assert month_totals(c,'2026-10')[0]==8050
+    undo_return(c,change)
+    assert month_totals(c,'2026-10')[0]==8550
+
+
 def test_advance_and_repayment(ledger):
     from bill_pipeline.adjustments import create_advance,allocate_repayment,revoke_advance
     c,key=ledger

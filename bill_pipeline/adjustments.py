@@ -188,3 +188,56 @@ def resolve_refund_review(conn,key,decision):
         for (iid,) in conn.execute("SELECT id FROM review_issues WHERE source=? AND tx_id=? AND kind='退款待核查' AND resolved_at IS NULL",key).fetchall():
             conn.execute('INSERT INTO review_decisions(issue_id,decision,created_at) VALUES(?,?,?)',(iid,decision.strip(),datetime.now().isoformat()))
             conn.execute('UPDATE review_issues SET resolved_at=? WHERE id=?',(datetime.now().isoformat(),iid))
+
+
+def record_return(conn,kind,expense_key,receipt_key,cents):
+    """统一回款入口，AA的组创建和收款分配在同一事务中完成。"""
+    from bill_pipeline.migrations import data_revision
+    integer(cents)
+    before=data_revision(conn)
+    if kind=='refund':
+        eid=confirm_refund(conn,expense_key,receipt_key,cents)
+        return {'kind':kind,'id':eid,'revision':data_revision(conn),'changed':data_revision(conn)!=before}
+    if kind!='aa':raise ValueError('请选择退款或AA回款')
+    if receipt_key is None:raise ValueError('AA回款需要选择收款记录；尚未收齐可使用更多操作')
+    with writing(conn):
+        expense=transaction(conn,expense_key,'net_transactions')
+        receipt=transaction(conn,receipt_key)
+        if expense['result']!='消费' or receipt['result']!='收入':raise ValueError('请选择有效支出和已识别的收入记录')
+        group=conn.execute('SELECT id,personal_cents,net_snapshot FROM advance_groups WHERE source=? AND tx_id=? AND revoked_at IS NULL',expense_key).fetchone()
+        old_own=None
+        created=not group
+        if group:
+            gid,old_own,net=group
+            if not conn.execute('SELECT 1 FROM valid_advances WHERE id=?',(gid,)).fetchone():raise ValueError('已有AA分配需重核，请展开更多操作')
+            prior=conn.execute('SELECT id,cents FROM repayment_allocations WHERE advance_id=? AND source=? AND tx_id=? AND revoked_at IS NULL',(gid,*receipt_key)).fetchone()
+            if prior:
+                if prior[1]!=cents:raise ValueError('该收款已分配，修改金额前请先撤销')
+                return {'kind':kind,'id':prior[0],'changed':False,'revision':before}
+            used=conn.execute('SELECT COALESCE(SUM(cents),0) FROM repayment_allocations WHERE advance_id=? AND revoked_at IS NULL',(gid,)).fetchone()[0]
+            # 普通回款按累计收回金额自动计算自付额；明确设置过的未收齐AA保留个人份额。
+            own=old_own-cents if net-old_own==used else old_own
+            if own<0 or used+cents>net-own:raise ValueError('回款超过这笔支出的可抵扣金额')
+        else:
+            net=expense['net_cents'];own=net-cents;gid=uuid4().hex
+            if own<0:raise ValueError('回款超过这笔支出的净额')
+        available=transaction(conn,receipt_key,'effective_transactions')['counted_cents']
+        if cents>available:raise ValueError('回款超过收款记录的可分配金额')
+        if created:conn.execute('INSERT INTO advance_groups VALUES(?,?,?,?,?,NULL)',(gid,*expense_key,net,own))
+        else:conn.execute('UPDATE advance_groups SET personal_cents=? WHERE id=?',(own,gid))
+        baseline=receipt['counted_cents']-conn.execute('SELECT COALESCE(SUM(f.cents),0) FROM refund_evidence e JOIN valid_refunds f ON f.id=e.event_id WHERE e.source=? AND e.tx_id=?',receipt_key).fetchone()[0]
+        rid=uuid4().hex
+        conn.execute('INSERT INTO repayment_allocations VALUES(?,?,?,?,?,?,NULL)',(rid,gid,*receipt_key,cents,baseline))
+    return {'kind':kind,'id':rid,'group':gid,'created':created,'old_own':old_own,'changed':True,'revision':data_revision(conn)}
+
+
+def undo_return(conn,change):
+    from bill_pipeline.migrations import data_revision
+    if not change.get('changed'):return
+    if data_revision(conn)!=change['revision']:raise ValueError('数据已变化，请在更多操作中解除对应回款')
+    if change['kind']=='refund':
+        revoke_refund(conn,change['id']);return
+    with writing(conn):
+        conn.execute('UPDATE repayment_allocations SET revoked_at=? WHERE id=?',(datetime.now().isoformat(),change['id']))
+        if change['created']:conn.execute('UPDATE advance_groups SET revoked_at=? WHERE id=?',(datetime.now().isoformat(),change['group']))
+        else:conn.execute('UPDATE advance_groups SET personal_cents=? WHERE id=?',(change['old_own'],change['group']))
