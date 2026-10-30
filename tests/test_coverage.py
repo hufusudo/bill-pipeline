@@ -14,3 +14,14 @@ def test_coverage_uses_export_time_and_marks_gaps(tmp_path):
     assert result['sources']['支付宝']['gaps']
     set_expected_sources(c,['微信'])
     assert coverage(c,'2026-10-01 00:00:00','2026-10-10 23:59:59')['complete']
+
+
+def test_verified_reimport_covers_legacy_unknown_interval(tmp_path):
+    from bill_pipeline.coverage import coverage
+    c=connect(':memory:')
+    import_bill(c,write_wechat_xlsx(tmp_path/'a.xlsx'),'a.xlsx')
+    with c:c.execute('UPDATE imports SET exported_at=NULL,export_scope=NULL')
+    import_bill(c,write_wechat_xlsx(tmp_path/'b.xlsx'),'b.xlsx')
+    result=coverage(c,'2026-10-01 00:00:00','2026-10-20 23:59:59')
+    assert result['complete']
+    assert not result['sources']['微信']['unknown_metadata']

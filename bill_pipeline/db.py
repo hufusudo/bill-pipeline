@@ -76,18 +76,22 @@ def connect(path) -> sqlite3.Connection:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
     existed = str(path) != ":memory:" and Path(path).exists() and Path(path).stat().st_size > 0
     conn = sqlite3.connect(path)
-    conn.execute("PRAGMA foreign_keys = ON")
-    from bill_pipeline.migrations import migrate
-    if existed:
-        migrate(conn, Path(path)) if conn.execute("SELECT 1 FROM sqlite_master WHERE name='transactions'").fetchone() else None
-    conn.executescript(SCHEMA)
-    migrate(conn, None)
-    with conn:
-        conn.executemany("INSERT OR IGNORE INTO categories (name, position) VALUES (?, ?)",
-                         [(name, i) for i, name in enumerate(DEFAULT_CATEGORIES, start=1)])
-    from bill_pipeline.observations import refresh_rules
-    refresh_rules(conn)
-    return conn
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        from bill_pipeline.migrations import migrate
+        if existed:
+            migrate(conn, Path(path)) if conn.execute("SELECT 1 FROM sqlite_master WHERE name='transactions'").fetchone() else None
+        conn.executescript(SCHEMA)
+        migrate(conn, None)
+        with conn:
+            conn.executemany("INSERT OR IGNORE INTO categories (name, position) VALUES (?, ?)",
+                             [(name, i) for i, name in enumerate(DEFAULT_CATEGORIES, start=1)])
+        from bill_pipeline.observations import refresh_rules
+        refresh_rules(conn)
+        return conn
+    except BaseException:
+        conn.close()
+        raise
 
 
 def save_import(conn: sqlite3.Connection, bill: ParsedBill, rows: pd.DataFrame,

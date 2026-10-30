@@ -47,8 +47,8 @@ def coverage(conn,start,end,expected_sources=None):
             cursor=max(cursor,y+timedelta(seconds=1))
         if cursor<=b:gaps.append((cursor,b))
         fmt=lambda pairs:[[x.isoformat(sep=' '),y.isoformat(sep=' ')] for x,y in pairs]
-        sources[source]={'intervals':fmt(merged),'gaps':fmt(gaps),'unknown_metadata':unknown,
-                         'complete':not gaps and not unknown}
+        sources[source]={'intervals':fmt(merged),'gaps':fmt(gaps),'unknown_metadata':unknown and bool(gaps),
+                         'complete':not gaps}
     return {'start':start,'end':end,'sources':sources,'complete':bool(sources) and all(v['complete'] for v in sources.values())}
 
 
@@ -59,3 +59,9 @@ def trust_info(conn,month):
     pending=len(list_review_issues(conn,month))
     return {'coverage':covered,'pending_reviews':pending,'revision':data_revision(conn),
             'provisional':pending>0 or not covered['complete']}
+
+
+def range_trust(conn,start,end):
+    covered=coverage(conn,start,end)
+    pending=sum(start[:10]<=r['tx_time'][:10]<=end[:10] for r in list_review_issues(conn))
+    return {'coverage':covered,'pending_reviews':pending,'revision':data_revision(conn),'provisional':bool(pending) or not covered['complete']}

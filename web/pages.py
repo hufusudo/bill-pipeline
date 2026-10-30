@@ -407,7 +407,12 @@ def register() -> None:
     def index() -> None:
         ui.add_css(CSS)
         ui.add_head_html(COUNT_UP_JS)
-        conn = connect(db_path())
+        try:
+            conn = connect(db_path())
+        except Exception as error:
+            ui.label('本机数据库无法打开或升级').classes('title')
+            ui.label(f'操作未完成（{type(error).__name__}）。请检查数据库文件权限与可用空间；如已生成升级备份，会保留在 data/backups/。不要在服务运行时覆盖数据库。').classes('note')
+            return
         reclassify_unknown(conn)  # 程序更新、补了清洗规则以后，旧的“未识别”交易按新规则重新判断
         ctx = Context(conn)
         ui.context.client.on_disconnect(ctx.ask_session.stop)

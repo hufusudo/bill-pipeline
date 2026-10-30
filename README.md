@@ -43,7 +43,7 @@ Each row gets a result (`消费` spending / `收入` income / `不算` not count
 | Failed or closed | Status `交易关闭` or `支付失败` | Not counted (no money moved) | AI proposal |
 | Original of a fully refunded payment | `支出`, status `已全额退款` | Not spending | Author |
 | The refund itself | `收入`, type ends with `-退款` or status `已全额退款` | Not income | Author |
-| Partial refund | Status like `已退款(￥x)` | Spending = amount − refunded | Pending confirmation |
+| Partial refund | Status like `已退款(￥x)` | Original amount provisionally; manual review required | Unverified export format |
 | WeChat merchant / QR-code payment | (`支出`, `商户消费`, `支付成功`), (`支出`, `扫二维码付款`, `已转账`) | Spending, categorized by counterparty | AI proposal |
 | Another WeChat payment type | (`支出`, `消费-其他`, `支付成功`) | Spending, categorized by counterparty | Author |
 | Money transferred out (split bills, paying friends back) | (`支出`, `转账`, `对方已收钱`) | Spending, category fixed to "Other" | Author |
@@ -148,8 +148,18 @@ docs/           design document (Chinese)
 
 ## Known limitations
 
-- **Refunds that happen after an export.** A stored row is never updated: re-imports skip rows that already exist. If a purchase was exported as paid and refunded later, the later export contains only the refund row, which is excluded, so the purchase still counts as spending. The three checks look at one file at a time, so they cannot see this. In the two refunds seen so far, the merchant order numbers of the refund and the original overlap (one contains the other), which may allow matching them later; two samples are too few to rely on.
-- **Alipay refunds.** The Alipay rules only know "expense + 交易成功", and every "不计收支" row is treated as neutral without a warning. No Alipay refund has appeared in real data yet, so how one looks in the export is unverified. Add a rule when the first one appears.
+- **Unverified refund formats.** Alipay refund exports and partial-refund variants remain unverified. Refund-like records are flagged for local review; the app does not guess net amounts or automatically match by merchant name/amount.
+- **Coverage metadata.** Old imports or exports without a trustworthy generation time/all-transactions declaration remain “coverage unconfirmed”. Re-imports capture available metadata; missing periods are never estimated as zero spending.
+- **Personal adjustments.** Refund links, per-transaction category splits and AA allocations require explicit confirmation. Source changes can suspend adjustments until reviewed. AA repayment currently requires a recognized income record; unknown income types need a verified rule first.
+- **AI history.** Conversations are saved only in the local SQLite database, not encrypted by default. New questions send bounded context to the configured model. Old answers are flagged after data changes; opening history does not invoke the model.
+
+## Local review and history
+
+The **核查** page supports refund evidence, single-transaction categories/splits, counterparty aliases and recoverable advances. All changes show a preview before confirmation, and reject stale previews if the database changed. Source file checks remain separate from personal accounting adjustments.
+
+Database upgrades create an SQLite backup in `data/backups/` before applying transactional schema changes. Source observations are retained; re-imports distinguish new, updated, duplicate and conflicting transactions. Older exports cannot silently revert a confirmed full refund.
+
+The answer page includes **本机会话** with rename, soft-delete/restore and explicitly confirmed permanent deletion. Restarting does not automatically resume paid model requests. Deleted data can remain in older local backups.
 
 ## Credits
 
@@ -158,5 +168,4 @@ Requirements, cleaning rules and validation design by Huang Fei. Code written wi
 ## Roadmap
 
 - Renaming and deleting categories (this version can only add them).
-- Recategorizing single transactions, for example a split-bill transfer that should count as sports.
-- Matching refunds to their original purchases across exports (see Known limitations).
+- Validate additional real refund formats before adding automatic interpretation.

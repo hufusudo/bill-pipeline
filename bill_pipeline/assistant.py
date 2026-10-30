@@ -237,10 +237,18 @@ def run_tool(conn: sqlite3.Connection, name: str, args) -> dict:
         return {"error": f"没有这个工具：{name}"}
     try:
         result = function(conn, **args)
-        from bill_pipeline.coverage import trust_info
+        from bill_pipeline.coverage import trust_info,range_trust
         month = args.get('month') or args.get('target_month')
         if month:
             result['trust'] = trust_info(conn,month)
+        elif args.get('start_date') and args.get('end_date'):
+            result['trust']=range_trust(conn,args['start_date']+' 00:00:00',args['end_date']+' 23:59:59')
+        else:
+            have=months(conn)
+            if have:
+                import calendar
+                last=have[0];y,m=map(int,last.split('-'))
+                result['trust']=range_trust(conn,have[-1]+'-01 00:00:00',last+f'-{calendar.monthrange(y,m)[1]:02d} 23:59:59')
         if args.get('base_month'):
             result['base_trust'] = trust_info(conn,args['base_month'])
         return result

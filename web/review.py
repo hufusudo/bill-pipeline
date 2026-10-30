@@ -9,6 +9,7 @@ from bill_pipeline.coverage import trust_info,set_expected_sources
 from bill_pipeline.db import categories,set_category
 from bill_pipeline.observations import select_observation
 from bill_pipeline.model import BillError
+from bill_pipeline.migrations import data_revision
 
 
 def render_trust_banner(ctx):
@@ -22,6 +23,7 @@ def render_trust_banner(ctx):
             if item['unknown_metadata']:ui.label('有导入文件缺少可信导出时间或全部交易范围声明，不能确认完整。').classes('note')
             for a,b in item['gaps']:ui.label(f'未确认覆盖 {a} — {b}').classes('note')
         ui.label('文件核验通过不代表所有月份、所有来源或个人消费口径均已核查。').classes('note')
+        ui.label('个人消费与结余含垫款、退款等调整，不等同于银行余额变化。').classes('note')
         ui.button('去核查',on_click=lambda:ctx.show('review')).props('flat dense color=teal')
 
 
@@ -30,8 +32,10 @@ def render_review(ctx):
     ui.label('来源流水保留原样；退款、分类与垫款通过可撤销的个人调整计算。').classes('note')
     chosen=[None]
 
-    def execute(action,dialog):
+    def execute(action,dialog,revision):
         try:
+            if data_revision(ctx.conn)!=revision:
+                ui.notify('数据已变化，请重新预览',type='warning');dialog.close();body.refresh();return
             action()
         except (ValueError,BillError) as error:
             ui.notify(str(error),type='warning');return
@@ -40,13 +44,14 @@ def render_review(ctx):
         dialog.close();ui.notify('已保存，可返回总览核对');body.refresh()
 
     def preview(text,action):
+        revision=data_revision(ctx.conn)
         with ui.dialog() as dialog,ui.card().classes('review-dialog'):
             ui.label('确认这次调整').classes('text-lg font-bold')
             ui.label(text).classes('whitespace-pre-wrap')
             ui.label('只修改个人计入口径，原始导入证据保留。').classes('note')
             with ui.row():
                 ui.button('取消',on_click=dialog.close).props('flat')
-                ui.button('确认保存',on_click=lambda:execute(action,dialog)).mark('review-confirm')
+                ui.button('确认保存',on_click=lambda:execute(action,dialog,revision)).mark('review-confirm')
         dialog.open()
 
     @ui.refreshable

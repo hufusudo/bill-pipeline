@@ -23,6 +23,14 @@ async def test_overview_empty(user: User, db):
     await user.should_see("还没有导入账单")
 
 
+async def test_database_upgrade_failure_has_safe_explanation(user:User,db,monkeypatch):
+    def fail(*args):raise OSError('private exception content')
+    monkeypatch.setattr('web.pages.connect',fail)
+    await user.open('/')
+    await user.should_see('本机数据库无法打开或升级')
+    await user.should_not_see('private exception content')
+
+
 async def test_overview_with_data(user: User, db, tmp_path):
     import_bill(connect(db), write_wechat_xlsx(tmp_path / "b.xlsx"), "b.xlsx")
     await user.open("/")

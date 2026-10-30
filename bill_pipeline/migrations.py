@@ -80,9 +80,10 @@ def bump_revision(conn) -> int:
 
 def backup_database(conn, path: Path) -> Path:
     folder = path.parent / 'backups'
-    folder.mkdir(parents=True, exist_ok=True)
+    folder.mkdir(parents=True, exist_ok=True,mode=0o700)
     target = folder / f'{path.stem}-{datetime.now():%Y%m%d-%H%M%S}-{uuid4().hex[:8]}.db'
     backup = sqlite3.connect(target)
+    target.chmod(0o600)
     try:
         conn.backup(backup)
     finally:

@@ -77,7 +77,7 @@ def begin_message(conn,cid,question,month,mode,run_id,owner_instance):
 
 
 def _safe_evidence(step):
-    allowed=('month','base_month','target_month','base','target','expense','income','total','totals','count','delta','change_percent','start_date','end_date','group_by','coverage','note')
+    allowed=('month','base_month','target_month','base','target','expense','income','total','totals','count','delta','change_percent','start_date','end_date','group_by','coverage','by_category','trust','base_trust','note')
     data={k:v for k,v in step.result.items() if k in allowed}
     # 输入由本机工具产生，嵌套字段仍做键白名单，而不是保存全部SDK对象。
     def clean(value):

@@ -130,6 +130,8 @@ def comparison_view(answer: Answer) -> dict | None:
 
 
 def render_result(result: dict):
+    scope=[str(result[k]) for k in ('month','base_month','target_month','start_date','end_date') if result.get(k)]
+    if scope:ui.label('查询范围：'+' — '.join(scope)).classes('ask-footnote')
     for key in ('trust','base_trust'):
         if result.get(key,{}).get('provisional'):
             ui.label('数据范围不足或有待核查项；这些数字为暂计口径。').classes('ask-footnote')
