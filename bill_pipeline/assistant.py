@@ -4,7 +4,8 @@ import re
 import sqlite3
 from datetime import date
 from decimal import Decimal
-from typing import NamedTuple
+from bill_pipeline.assistant_state import Answer, Step, get_budget, history_messages, RunState
+import time
 
 from bill_pipeline.ai import AIError
 from bill_pipeline.convert import yuan
@@ -24,17 +25,6 @@ SYSTEM_PROMPT = """你是用户的记账助手，根据用户自己的账单回�
 - 用户没说月份时，默认是 {default_month}。今天是 {today}。
 - 付给个人或个人转来的钱，交易对方都显示成“{person}”，不要猜是谁。
 - 用中文回答，简短，先说结论。"""
-
-
-class Step(NamedTuple):
-    tool: str
-    args: dict
-    result: dict
-
-
-class Answer(NamedTuple):
-    text: str
-    steps: list[Step]
 
 
 def _month(conn: sqlite3.Connection, month) -> None:
