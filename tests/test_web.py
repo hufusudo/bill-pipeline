@@ -190,6 +190,61 @@ async def test_ask_without_config(user: User, db, tmp_path):
     await user.should_see("AI 还没配置")
 
 
+async def test_ask_follows_up_and_new_conversation(user: User, db, tmp_path, monkeypatch):
+    llm = FakeLLM([{'content': '第一答'}, {'content': '第二答'}])
+    monkeypatch.setattr('bill_pipeline.ai.make_client', lambda: (llm, 'fake'))
+    await _ask(user, db, tmp_path, '第一个问题')
+    user.find(marker='ask-btn').click()
+    await user.should_see('第一答')
+    user.find(marker='question').clear().type('然后呢')
+    user.find(marker='ask-btn').click()
+    await user.should_see('第二答')
+    assert '第一个问题' in str(llm.calls[-1]['messages'])
+    user.find(marker='nav-trend').click()
+    user.find(marker='nav-ask').click()
+    await user.should_see('第二答')
+    user.find(marker='ask-new').click()
+    await user.should_not_see('第二答')
+
+
+async def test_ask_example_only_fills(user: User, db, tmp_path):
+    await _ask(user, db, tmp_path, '')
+    user.find(marker='ask-example-0').click()
+    assert user.find(marker='question').elements.pop().value
+    await user.should_see('本次分析的依据')
+
+
+async def test_ask_stop_keeps_evidence_and_rejects_late_reply(user: User, db, tmp_path, monkeypatch):
+    import asyncio
+    import threading
+    release = threading.Event()
+    slow = FakeLLM([{'tool_calls':[('list_months', {})]}, {'content':'不应显示的迟到回答'}])
+    fast = FakeLLM([{'content':'新的回答'}])
+    original = slow.chat.completions.create
+    def block_second(**kw):
+        if len(slow.calls) == 1:
+            release.wait(5)
+        return original(**kw)
+    slow.chat.completions.create = block_second
+    clients = iter([slow, fast])
+    monkeypatch.setattr('bill_pipeline.ai.make_client', lambda: (next(clients), 'fake'))
+    await _ask(user, db, tmp_path, '先查月份')
+    user.find(marker='ask-btn').click()
+    try:
+        await user.should_see('已取得 1 项查询结果')
+        user.find(marker='ask-stop').click()
+        await user.should_see('已停止')
+        await user.should_see('这次查了什么')
+        user.find(marker='question').type('新问题')
+        user.find(marker='ask-btn').click()
+        await user.should_see('新的回答')
+    finally:
+        release.set()
+    await asyncio.sleep(0.05)
+    await user.should_see('新的回答')
+    await user.should_not_see('不应显示的迟到回答')
+
+
 async def test_recategorize_updates_ai_accuracy(user: User, db, tmp_path):
     conn = connect(db)
     import_bill(conn, write_wechat_xlsx(tmp_path / "b.xlsx"), "b.xlsx")
